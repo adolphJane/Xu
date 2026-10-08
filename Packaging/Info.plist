@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh-Hans</string>
+    <key>CFBundleDisplayName</key>
+    <string>序</string>
+    <key>CFBundleExecutable</key>
+    <string>Quadrant</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.xu.sequence</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>序</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.4.2</string>
+    <key>CFBundleVersion</key>
+	<string>6</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>序需要在你明确授权后读取日程，并仅在你主动操作时将任务写入系统日历。</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>序需要在你明确授权后读取日程，并仅在你主动操作时将任务写入系统日历。</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 序. All rights reserved.</string>
+</dict>
+</plist>
