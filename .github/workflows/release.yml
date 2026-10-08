@@ -1,0 +1,46 @@
+name: Build and publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build macOS package
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)
+          TAG_VERSION="${RELEASE_TAG#v}"
+          if [[ "${TAG_VERSION}" != "${APP_VERSION}" ]]; then
+            echo "Tag ${RELEASE_TAG} does not match app version ${APP_VERSION}."
+            exit 1
+          fi
+
+      - name: Build universal DMG
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: zsh scripts/package-unsigned.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/序-unsigned-${GITHUB_REF_NAME}.dmg" \
+            --title "序 ${GITHUB_REF_NAME}" \
+            --generate-notes
