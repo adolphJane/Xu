@@ -10,8 +10,11 @@ INTEL_BUILD_DIR="${TEMP_BUILD_DIR}/x86_64"
 APP_DIR="${TEMP_BUILD_DIR}/序.app"
 DIST_DIR="${PROJECT_DIR}/dist"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-PACKAGE_VERSION="${RELEASE_VERSION:-${STAMP}}"
-DMG_PATH="${DIST_DIR}/序-unsigned-${PACKAGE_VERSION}.dmg"
+if [[ -n "${RELEASE_VERSION:-}" ]]; then
+  DMG_PATH="${DIST_DIR}/序-${RELEASE_VERSION}.dmg"
+else
+  DMG_PATH="${DIST_DIR}/序-unsigned-${STAMP}.dmg"
+fi
 
 cd "${PROJECT_DIR}"
 mkdir -p "${DIST_DIR}" "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"

@@ -54,7 +54,7 @@ jobs:
             echo
             echo "## 安装"
             echo
-            echo "下载 序-unsigned-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖入“应用程序”文件夹。首次打开请参考 DMG 中的安装说明。"
+            echo "下载 序-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖入“应用程序”文件夹。首次打开请参考 DMG 中的安装说明。"
           } > release-notes.md
 
       - name: Publish GitHub Release
@@ -62,7 +62,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            "dist/序-unsigned-${GITHUB_REF_NAME}.dmg" \
+            "dist/序-${GITHUB_REF_NAME}.dmg" \
             --title "序 ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             --verify-tag
