@@ -45,6 +45,17 @@ zsh scripts/package-unsigned.sh
 
 产物保存在 `dist/`，并附带 [内测安装说明](Packaging/INSTALL-TEST.md)。该包为 ad-hoc 签名，首次打开会出现 macOS 安全确认；正式分发仍需 Developer ID 签名与 Apple 公证。
 
+## GitHub Releases 自动打包
+
+将 `Packaging/Info.plist` 中的应用版本更新并提交后，推送对应的版本标签即可触发 GitHub Actions 自动构建通用架构 DMG，并创建 GitHub Release：
+
+```bash
+git tag v0.4.2
+git push origin v0.4.2
+```
+
+标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `序-unsigned-版本号.dmg` 会作为 Release 附件发布。构建使用 ad-hoc 签名，首次打开仍需按内测安装说明确认；正式分发仍需 Developer ID 签名与 Apple 公证。
+
 ## 工程结构
 
 - `Sources/Quadrant/QuadrantApp.swift`：应用入口、任务模型、持久化、钥匙串和 DeepSeek 服务
