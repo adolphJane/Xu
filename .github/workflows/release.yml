@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validate release version
         env:
@@ -36,6 +38,25 @@ jobs:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: zsh scripts/package-unsigned.sh
 
+      - name: Generate release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PREVIOUS_TAG="$(git tag --merged "${GITHUB_SHA}^" --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          {
+            echo "## 更新内容"
+            echo
+            if [[ -n "${PREVIOUS_TAG}" ]]; then
+              git log --no-merges --format='- %s (`%h`)' "${PREVIOUS_TAG}..${GITHUB_SHA}"
+            else
+              git log --no-merges --reverse --format='- %s (`%h`)' --max-count=20 "${GITHUB_SHA}"
+            fi
+            echo
+            echo "## 安装"
+            echo
+            echo "下载 序-unsigned-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖入“应用程序”文件夹。首次打开请参考 DMG 中的安装说明。"
+          } > release-notes.md
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,4 +64,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             "dist/序-unsigned-${GITHUB_REF_NAME}.dmg" \
             --title "序 ${GITHUB_REF_NAME}" \
-            --generate-notes
+            --notes-file release-notes.md \
+            --verify-tag
