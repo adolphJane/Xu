@@ -11,7 +11,7 @@ APP_DIR="${TEMP_BUILD_DIR}/序.app"
 DIST_DIR="${PROJECT_DIR}/dist"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 if [[ -n "${RELEASE_VERSION:-}" ]]; then
-  DMG_PATH="${DIST_DIR}/序-${RELEASE_VERSION}.dmg"
+  DMG_PATH="${DIST_DIR}/Xu-${RELEASE_VERSION}.dmg"
 else
   DMG_PATH="${DIST_DIR}/序-unsigned-${STAMP}.dmg"
 fi
