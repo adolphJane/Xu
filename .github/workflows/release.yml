@@ -33,10 +33,50 @@ jobs:
             exit 1
           fi
 
+      - name: Configure Apple signing when available
+        env:
+          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          if [[ -z "${APPLE_CERTIFICATE_P12_BASE64}${APPLE_CERTIFICATE_PASSWORD}${APPLE_NOTARY_KEY_P8}${APPLE_NOTARY_KEY_ID}${APPLE_NOTARY_ISSUER_ID}" ]]; then
+            echo "SIGNING_MODE=adhoc" >> "$GITHUB_ENV"
+            echo "Apple signing secrets are absent; publishing an explicitly marked pre-release."
+            exit 0
+          fi
+          if [[ -z "$APPLE_CERTIFICATE_P12_BASE64" || -z "$APPLE_CERTIFICATE_PASSWORD" || -z "$APPLE_NOTARY_KEY_P8" || -z "$APPLE_NOTARY_KEY_ID" || -z "$APPLE_NOTARY_ISSUER_ID" ]]; then
+            echo "::error::Apple signing secrets are incomplete."
+            exit 1
+          fi
+          KEYCHAIN_PATH="$RUNNER_TEMP/xu-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERTIFICATE_PATH="$RUNNER_TEMP/xu-developer-id.p12"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/xu-notary-key.p8"
+          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          printf '%s' "$APPLE_NOTARY_KEY_P8" > "$NOTARY_KEY_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          SIGNING_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | awk '/Developer ID Application/ {print $2; exit}')"
+          if [[ -z "$SIGNING_IDENTITY" ]]; then
+            echo "::error::No valid Developer ID Application identity was imported."
+            exit 1
+          fi
+          echo "SIGNING_MODE=signed" >> "$GITHUB_ENV"
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          echo "NOTARY_API_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+          echo "NOTARY_KEY_ID=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
+          echo "NOTARY_ISSUER_ID=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
+
       - name: Build universal DMG
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
-        run: zsh scripts/package-unsigned.sh
+        run: zsh scripts/package-macos.sh
 
       - name: Generate release notes
         env:
@@ -54,15 +94,31 @@ jobs:
             echo
             echo "## 安装"
             echo
-            echo "下载 Xu-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖入“应用程序”文件夹。首次打开请参考 DMG 中的安装说明。"
+            echo "下载 Xu-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖到“Applications”快捷入口。"
+            if [[ "$SIGNING_MODE" == "signed" ]]; then
+              echo "此版本已通过 Developer ID 签名和 Apple 公证。"
+            else
+              echo "此版本使用临时签名，尚未通过 Apple 公证；macOS 首次打开时会显示安全提示。请参考 DMG 中的安装说明。"
+            fi
           } > release-notes.md
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          release_flags=()
+          if [[ "$SIGNING_MODE" != "signed" ]]; then release_flags+=(--prerelease); fi
           gh release create "${GITHUB_REF_NAME}" \
             "dist/Xu-${GITHUB_REF_NAME}.dmg" \
             --title "序 ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
-            --verify-tag
+            --verify-tag \
+            "${release_flags[@]}"
+
+      - name: Remove temporary signing assets
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/xu-signing.keychain-db" ]]; then
+            security delete-keychain "$RUNNER_TEMP/xu-signing.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/xu-developer-id.p12" "$RUNNER_TEMP/xu-notary-key.p8"

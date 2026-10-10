@@ -35,26 +35,33 @@ swift run
 
 首次使用 AI 任务、蓝图、重新规划或日报前，请在“设置”中填写 DeepSeek API Key。日报请求包含当天相关任务的项目、标题、分类、象限、状态、预计时长，以及用户主动填写的备注、阻塞原因和日报补充。
 
-## 无账号内测打包
+## 本地内测打包
 
 可在具备 Xcode 的 Mac 上执行下列命令，生成适用于 Apple Silicon 与 Intel Mac 的未公证 `.dmg`：
 
 ```bash
-zsh scripts/package-unsigned.sh
+zsh scripts/package-macos.sh
 ```
 
-产物保存在 `dist/`，并附带 [内测安装说明](Packaging/INSTALL-TEST.md)。该包为 ad-hoc 签名，首次打开会出现 macOS 安全确认；正式分发仍需 Developer ID 签名与 Apple 公证。
+产物保存在 `dist/`。DMG 中同时包含“序”和“Applications”快捷入口，可直接拖动安装。无 Apple 开发者凭据时生成临时签名的内测包，首次打开仍会有 macOS 安全提示，操作见[内测安装说明](Packaging/INSTALL-TEST.md)。
 
 ## GitHub Releases 自动打包
 
 将 `Packaging/Info.plist` 中的应用版本更新并提交后，推送对应的版本标签即可触发 GitHub Actions 自动构建通用架构 DMG，并创建 GitHub Release：
 
 ```bash
-git tag v0.4.4
-git push origin v0.4.4
+git tag v0.4.5
+git push origin v0.4.5
 ```
 
-标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `Xu-v版本号.dmg` 会作为 Release 附件发布，说明会自动列出上一个版本标签之后的提交内容，并附上安装提示。构建使用 ad-hoc 签名，首次打开仍需按内测安装说明确认；正式分发仍需 Developer ID 签名与 Apple 公证。
+标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `Xu-v版本号.dmg` 会作为 Release 附件发布，说明会自动列出上一个版本标签之后的提交内容。配置下列 GitHub Actions Secrets 后，工作流会使用 Developer ID 签名、提交 Apple 公证并将公证票据附在 DMG 上：
+
+- `APPLE_CERTIFICATE_P12_BASE64`：Developer ID Application 证书及私钥的 `.p12` 文件内容，以 Base64 编码
+- `APPLE_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码
+- `APPLE_NOTARY_KEY_P8`：有公证权限的 App Store Connect API Key 文件内容
+- `APPLE_NOTARY_KEY_ID`、`APPLE_NOTARY_ISSUER_ID`：对应的 Key ID 和 Issuer ID
+
+五项凭据都未配置时，工作流仍会自动打包，但会将 Release 标记为内测预发布并明确说明 macOS 安全提示。凭据只配置一部分时，构建会失败，避免误发未经公证的正式包。macOS 对来自互联网的应用可能仍会显示一次常规打开确认；Developer ID 签名和公证解决的是“无法验证开发者／无法检查恶意软件”警告。
 
 ## 工程结构
 
