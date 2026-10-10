@@ -73,7 +73,6 @@ struct TodayWorkbenchView: View {
                             }
                         }
                         .padding(.top, 17)
-                        .animation(motion, value: store.todayTasks)
                         if !showRail {
                             contextPanel
                                 .padding(.top, 24)
