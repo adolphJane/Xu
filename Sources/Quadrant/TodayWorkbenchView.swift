@@ -170,7 +170,7 @@ struct TodayWorkbenchView: View {
                         .tint(.white.opacity(0.2))
                 } else {
                     Button("开始执行", systemImage: "play.fill") {
-                        withAnimation(motion) { store.start(task) }
+                        store.start(task)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.white)
@@ -463,7 +463,7 @@ private struct TodayActionRow: View {
             }
             Menu {
                 if task.needsAction && !task.isInProgress {
-                    Button("开始执行", systemImage: "play") { withAnimation(motion) { store.start(task) } }
+                    Button("开始执行", systemImage: "play") { store.start(task) }
                         .disabled(store.executionBlockReason(for: task) != nil)
                 }
                 if !task.isCompleted {

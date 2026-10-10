@@ -1448,10 +1448,8 @@ struct MenuBarStatusLabel: View {
     @EnvironmentObject private var store: TaskStore
 
     var body: some View {
-        if let task = store.todayTasks.first(where: \.isInProgress), let startedAt = task.startedAt {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                Label("\(task.title.prefix(8)) \(max(0, Int(context.date.timeIntervalSince(startedAt)) / 60))m", systemImage: "play.circle.fill")
-            }
+        if let task = store.todayTasks.first(where: \.isInProgress) {
+            Label(String(task.title.prefix(8)), systemImage: "play.circle.fill")
         } else if let item = store.upcomingAnniversaries.first(where: { $0.showInMenuBar }), let days = item.daysRemaining(), days <= 7 {
             Label(days == 0 ? "\(item.displayName) 今天" : "\(item.displayName) \(days)天", systemImage: item.type.icon)
         } else {

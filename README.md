@@ -50,8 +50,8 @@ zsh scripts/package-unsigned.sh
 将 `Packaging/Info.plist` 中的应用版本更新并提交后，推送对应的版本标签即可触发 GitHub Actions 自动构建通用架构 DMG，并创建 GitHub Release：
 
 ```bash
-git tag v0.4.2
-git push origin v0.4.2
+git tag v0.4.4
+git push origin v0.4.4
 ```
 
 标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `Xu-v版本号.dmg` 会作为 Release 附件发布，说明会自动列出上一个版本标签之后的提交内容，并附上安装提示。构建使用 ad-hoc 签名，首次打开仍需按内测安装说明确认；正式分发仍需 Developer ID 签名与 Apple 公证。
