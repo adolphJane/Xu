@@ -405,7 +405,9 @@ struct ParsedTask {
 @MainActor
 final class TaskStore: ObservableObject {
     @Published var tasks: [TaskItem] = [] {
-        didSet { persistTasks() }
+        didSet {
+            if !isApplyingSingleTaskMutation { persistTasks() }
+        }
     }
     @Published var blueprints: [BlueprintItem] = [] { didSet { persist { try persistence?.saveBlueprints(blueprints) } } }
     @Published var stages: [StageItem] = [] { didSet { persist { try persistence?.saveStages(stages) } } }
@@ -429,10 +431,19 @@ final class TaskStore: ObservableObject {
 
     private let storageKey = "quadrant.tasks.v1"
     private var persistence: PersistenceController?
+    private var isApplyingSingleTaskMutation = false
 
     private func persistTasks() {
         if let persistence {
             persist { try persistence.saveTasks(tasks) }
+        } else if let data = try? JSONEncoder().encode(tasks) {
+            UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    private func persistTask(_ task: TaskItem) {
+        if let persistence {
+            persist { try persistence.saveTask(task) }
         } else if let data = try? JSONEncoder().encode(tasks) {
             UserDefaults.standard.set(data, forKey: storageKey)
         }
@@ -665,7 +676,10 @@ final class TaskStore: ObservableObject {
 
     private func mutate(_ task: TaskItem, change: (inout TaskItem) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        isApplyingSingleTaskMutation = true
         change(&tasks[index])
+        isApplyingSingleTaskMutation = false
+        persistTask(tasks[index])
     }
 
     func delete(_ task: TaskItem) {

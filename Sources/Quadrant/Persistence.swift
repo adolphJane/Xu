@@ -121,7 +121,7 @@ final class StoredTask {
         workflowImagesData = try? JSONEncoder().encode(item.images)
     }
 
-    func update(from item: TaskItem) {
+    func update(from item: TaskItem, preserveWorkflowImages: Bool = false) {
         title = item.title
         notes = item.notes
         project = item.project
@@ -146,7 +146,9 @@ final class StoredTask {
         isPlanLocked = item.isPlanLocked
         workflowX = item.workflowX
         workflowY = item.workflowY
-        workflowImagesData = try? JSONEncoder().encode(item.images)
+        if !preserveWorkflowImages {
+            workflowImagesData = try? JSONEncoder().encode(item.images)
+        }
     }
 
     var item: TaskItem {
@@ -492,6 +494,16 @@ final class PersistenceController {
     }
 
     func saveTasks(_ items: [TaskItem]) throws { try sync(items, records: context.fetch(FetchDescriptor<StoredTask>()), id: \.id, make: StoredTask.init, update: { $0.update(from: $1) }) }
+    func saveTask(_ item: TaskItem) throws {
+        let taskID = item.id
+        let descriptor = FetchDescriptor<StoredTask>(predicate: #Predicate { $0.id == taskID })
+        if let record = try context.fetch(descriptor).first {
+            record.update(from: item, preserveWorkflowImages: true)
+        } else {
+            context.insert(StoredTask(item))
+        }
+        try context.save()
+    }
     func saveBlueprints(_ items: [BlueprintItem]) throws { try sync(items, records: context.fetch(FetchDescriptor<StoredBlueprint>()), id: \.id, make: StoredBlueprint.init, update: { $0.update(from: $1) }) }
     func saveStages(_ items: [StageItem]) throws { try sync(items, records: context.fetch(FetchDescriptor<StoredStage>()), id: \.id, make: StoredStage.init, update: { $0.update(from: $1) }) }
     func saveMilestones(_ items: [MilestoneItem]) throws { try sync(items, records: context.fetch(FetchDescriptor<StoredMilestone>()), id: \.id, make: StoredMilestone.init, update: { $0.update(from: $1) }) }
