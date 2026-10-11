@@ -44,6 +44,7 @@ struct TaskComposerView: View {
     @State private var milestoneID: UUID?
     @State private var dependencyIDs: Set<UUID> = []
     @State private var project = ""
+    @State private var category = ""
     @State private var notes = ""
     @State private var quadrant: Quadrant = .schedule
     @State private var reportCategory: ReportCategory = .projectProgress
@@ -59,9 +60,10 @@ struct TaskComposerView: View {
     @State private var feedback: String?
     @State private var appliedDefaults = false
 
-    init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil) {
+    init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil, category: String? = nil) {
         _mode = State(initialValue: mode)
         _blueprintID = State(initialValue: blueprintID)
+        _category = State(initialValue: category ?? "")
     }
 
     private var motion: Animation? {
@@ -71,8 +73,8 @@ struct TaskComposerView: View {
     private var isAIInput: Bool { mode == .ai && !hasAIDraft }
     private var composerHeight: CGFloat {
         if isAIInput { return 390 }
-        if showDetails || (mode == .ai && !subtasks.isEmpty) { return 640 }
-        return 505
+        if showDetails || (mode == .ai && !subtasks.isEmpty) { return 690 }
+        return 555
     }
     private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var cleanSentence: String { sentence.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -259,6 +261,11 @@ struct TaskComposerView: View {
             .padding(.horizontal, 15)
             .frame(height: 50)
             .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 12))
+
+            TaskCategoryField(category: $category)
+                .padding(.horizontal, 15)
+                .frame(height: 50)
+                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 12))
 
             if mode == .completed {
                 HStack {
@@ -478,6 +485,7 @@ struct TaskComposerView: View {
             title: cleanTitle,
             notes: notes,
             project: normalizedProject.isEmpty ? nil : normalizedProject,
+            category: category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
             reportCategory: reportCategory,
             quadrant: quadrant,
             scheduledFor: actualDate,
@@ -498,6 +506,7 @@ struct TaskComposerView: View {
                 store.add(TaskItem(
                     title: subtask.trimmingCharacters(in: .whitespacesAndNewlines),
                     project: parent.project,
+                    category: parent.category,
                     reportCategory: parent.reportCategory,
                     quadrant: parent.quadrant,
                     scheduledFor: parent.scheduledFor,

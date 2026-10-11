@@ -69,6 +69,7 @@ final class StoredTask {
     var title: String
     var notes: String
     var project: String?
+    var category: String?
     var reportCategoryRaw: String?
     var quadrantRaw: String
     var scheduledFor: Date
@@ -97,6 +98,7 @@ final class StoredTask {
         title = item.title
         notes = item.notes
         project = item.project
+        category = item.category
         reportCategoryRaw = item.reportCategory?.rawValue
         quadrantRaw = item.quadrant.rawValue
         scheduledFor = item.scheduledFor
@@ -125,6 +127,7 @@ final class StoredTask {
         title = item.title
         notes = item.notes
         project = item.project
+        category = item.category
         reportCategoryRaw = item.reportCategory?.rawValue
         quadrantRaw = item.quadrant.rawValue
         scheduledFor = item.scheduledFor
@@ -157,6 +160,7 @@ final class StoredTask {
             title: title,
             notes: notes,
             project: project,
+            category: category,
             reportCategory: reportCategoryRaw.flatMap(ReportCategory.init(rawValue:)),
             quadrant: Quadrant(rawValue: quadrantRaw) ?? .schedule,
             scheduledFor: scheduledFor,

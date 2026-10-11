@@ -6,6 +6,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case today = "今日"
     case blueprints = "蓝图"
     case quadrants = "四象限"
+    case categories = "分类"
     case calendar = "日历计划"
     case anniversaries = "纪念日"
     case completed = "已处理"
@@ -18,6 +19,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .today: "sun.max"
         case .blueprints: "point.3.connected.trianglepath.dotted"
         case .quadrants: "square.grid.2x2"
+        case .categories: "tag"
         case .calendar: "calendar"
         case .anniversaries: "heart.circle"
         case .completed: "checkmark.circle"
@@ -68,6 +70,7 @@ struct ContentView: View {
                     )
                     case .blueprints: BlueprintsView()
                     case .quadrants: QuadrantBoard(onSelect: { selectedTask = $0 })
+                    case .categories: TaskCategoriesView(onSelect: { selectedTask = $0 })
                     case .calendar: PlanView(onSelect: { selectedTask = $0 })
                     case .anniversaries: AnniversariesView()
                     case .completed: CompletedView(onSelect: { selectedTask = $0 })
@@ -139,7 +142,7 @@ struct SidebarView: View {
     @Binding var selection: AppSection?
     let onCommand: () -> Void
 
-    private let primarySections: [AppSection] = [.today, .blueprints, .quadrants, .calendar]
+    private let primarySections: [AppSection] = [.today, .blueprints, .quadrants, .categories, .calendar]
     private let recordSections: [AppSection] = [.inbox, .anniversaries, .completed, .report]
 
     var body: some View {
@@ -668,6 +671,7 @@ struct TaskCard: View {
                     HStack(spacing: 7) {
                         if !task.isPending { Text(task.effectiveStatus.title).foregroundStyle(statusColor) }
                         Label(task.projectName, systemImage: "folder").foregroundStyle(.secondary)
+                        Label(task.categoryName, systemImage: "tag").foregroundStyle(.secondary)
                         Label(task.quadrant.title, systemImage: "square.grid.2x2").foregroundStyle(preferences.color(for: task.quadrant))
                         Text("· \(task.estimatedMinutes) 分钟")
                         if let dueDate = task.dueDate { Text("· 截止 \(dueDate, format: .dateTime.month().day())") }
@@ -1041,6 +1045,7 @@ struct TaskEditor: View {
     @State private var title = ""
     @State private var notes = ""
     @State private var project = ""
+    @State private var category = ""
     @State private var reportCategory: ReportCategory = .projectProgress
     @State private var quadrant: Quadrant = .schedule
     @State private var scheduledFor = Date.now
@@ -1060,6 +1065,7 @@ struct TaskEditor: View {
         _title = State(initialValue: task?.title ?? "")
         _notes = State(initialValue: task?.notes ?? "")
         _project = State(initialValue: task?.project ?? "")
+        _category = State(initialValue: task?.category ?? "")
         _reportCategory = State(initialValue: task?.effectiveReportCategory ?? .projectProgress)
         _quadrant = State(initialValue: task?.quadrant ?? .schedule)
         _scheduledFor = State(initialValue: task?.scheduledFor ?? .now)
@@ -1081,6 +1087,7 @@ struct TaskEditor: View {
             Form {
                 TextField("事项名称", text: $title)
                 TextField("所属项目（日报按项目归类）", text: $project)
+                TaskCategoryField(category: $category)
                 TextField("备注（可选）", text: $notes, axis: .vertical)
                 Picker("日报分类", selection: $reportCategory) {
                     ForEach(ReportCategory.allCases) { Text($0.title).tag($0) }
@@ -1163,6 +1170,7 @@ struct TaskEditor: View {
         let task = TaskItem(
             id: original?.id ?? UUID(), title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes,
             project: project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : project.trimmingCharacters(in: .whitespacesAndNewlines),
+            category: category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
             reportCategory: reportCategory,
             quadrant: quadrant, scheduledFor: scheduledFor, dueDate: hasDeadline ? dueDate : nil,
             estimatedMinutes: estimatedMinutes, isComplete: original?.isComplete ?? false,
@@ -1188,6 +1196,7 @@ struct QuickCompletedEditor: View {
     @EnvironmentObject private var preferences: AppPreferences
     @State private var title = ""
     @State private var project = ""
+    @State private var category = ""
     @State private var blueprintID: UUID?
     @State private var reportCategory: ReportCategory = .projectProgress
     @State private var quadrant: Quadrant = .doNow
@@ -1209,6 +1218,7 @@ struct QuickCompletedEditor: View {
             Form {
                 TextField("完成了什么？", text: $title)
                 TextField("所属项目（日报按项目归类）", text: $project)
+                TaskCategoryField(category: $category)
                 Picker("关联蓝图", selection: $blueprintID) {
                     Text("不关联蓝图").tag(nil as UUID?)
                     ForEach(store.blueprints.filter { $0.archivedAt == nil }) { blueprint in
@@ -1252,6 +1262,7 @@ struct QuickCompletedEditor: View {
         store.add(TaskItem(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
             project: project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : project.trimmingCharacters(in: .whitespacesAndNewlines),
+            category: category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
             reportCategory: reportCategory,
             quadrant: quadrant,
             scheduledFor: completedAt,

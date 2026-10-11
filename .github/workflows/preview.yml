@@ -1,0 +1,35 @@
+name: Build macOS preview DMG
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package macOS preview
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build universal DMG
+        env:
+          RELEASE_VERSION: preview-${{ github.sha }}
+        run: zsh scripts/package-unsigned.sh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-preview-${{ github.sha }}
+          path: dist/Xu-preview-${{ github.sha }}.dmg
+          if-no-files-found: error
+          retention-days: 14

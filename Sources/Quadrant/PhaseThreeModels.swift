@@ -11,6 +11,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
     var reports: [DailyReportItem]
     var anniversaries: [AnniversaryItem]
     var weeklyReviews: [WeeklyReviewItem]
+    var categories: [String]? = nil
 
     var isValid: Bool {
         formatVersion == 1
@@ -194,7 +195,8 @@ enum SnapshotMerge {
             tasks: union(local.tasks, remote.tasks), blueprints: union(local.blueprints, remote.blueprints),
             stages: union(local.stages, remote.stages), milestones: union(local.milestones, remote.milestones),
             reports: union(local.reports, remote.reports), anniversaries: union(local.anniversaries, remote.anniversaries),
-            weeklyReviews: union(local.weeklyReviews, remote.weeklyReviews)
+            weeklyReviews: union(local.weeklyReviews, remote.weeklyReviews),
+            categories: Array(Set((local.categories ?? []) + (remote.categories ?? []))).sorted()
         )
     }
 }

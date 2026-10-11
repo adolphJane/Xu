@@ -5,8 +5,6 @@ SCRIPT_DIR="${0:A:h}"
 PROJECT_DIR="${SCRIPT_DIR:h}"
 TEMP_BUILD_DIR="$(mktemp -d /private/tmp/quadrant-package.XXXXXX)"
 trap 'rm -rf "${TEMP_BUILD_DIR}"' EXIT
-ARM_BUILD_DIR="${TEMP_BUILD_DIR}/arm64"
-INTEL_BUILD_DIR="${TEMP_BUILD_DIR}/x86_64"
 APP_DIR="${TEMP_BUILD_DIR}/序.app"
 DMG_ROOT="${TEMP_BUILD_DIR}/dmg"
 DIST_DIR="${PROJECT_DIR}/dist"
@@ -22,27 +20,8 @@ if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
   fi
 fi
 
-cd "${PROJECT_DIR}"
-mkdir -p "${DIST_DIR}" "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources" "${DMG_ROOT}"
-
-swift build --disable-sandbox -c release --arch arm64 --scratch-path "${ARM_BUILD_DIR}"
-swift build --disable-sandbox -c release --arch x86_64 --scratch-path "${INTEL_BUILD_DIR}"
-
-lipo -create \
-  "${ARM_BUILD_DIR}/arm64-apple-macosx/release/Quadrant" \
-  "${INTEL_BUILD_DIR}/x86_64-apple-macosx/release/Quadrant" \
-  -output "${APP_DIR}/Contents/MacOS/Quadrant"
-
-cp "${PROJECT_DIR}/Packaging/Info.plist" "${APP_DIR}/Contents/Info.plist"
-cp "${PROJECT_DIR}/Assets/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
-
-if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
-  codesign --force --options runtime --timestamp --sign "${SIGNING_IDENTITY}" "${APP_DIR}"
-else
-  cp "${PROJECT_DIR}/Packaging/INSTALL-TEST.md" "${APP_DIR}/Contents/Resources/安装说明.md"
-  codesign --force --sign - "${APP_DIR}"
-fi
-codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
+mkdir -p "${DIST_DIR}" "${DMG_ROOT}"
+"${SCRIPT_DIR}/build-app.sh" --release --universal --output "${APP_DIR}"
 
 cp -R "${APP_DIR}" "${DMG_ROOT}/序.app"
 ln -s /Applications "${DMG_ROOT}/Applications"

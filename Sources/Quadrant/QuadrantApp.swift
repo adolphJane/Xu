@@ -356,6 +356,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var title: String
     var notes: String = ""
     var project: String? = nil
+    var category: String? = nil
     var reportCategory: ReportCategory? = nil
     var quadrant: Quadrant
     var scheduledFor: Date = .now
@@ -392,6 +393,10 @@ struct TaskItem: Identifiable, Codable, Equatable {
         let value = project?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? "未归类项目" : value
     }
+    var categoryName: String {
+        let value = category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? "未分类" : value
+    }
     var effectiveDependencyIDs: [UUID] { dependencyIDs ?? [] }
     var planLocked: Bool { isPlanLocked ?? false }
     var images: [WorkflowImage] { workflowImages ?? [] }
@@ -408,6 +413,9 @@ final class TaskStore: ObservableObject {
         didSet {
             if !isApplyingSingleTaskMutation { persistTasks() }
         }
+    }
+    @Published var categories: [String] = [] {
+        didSet { UserDefaults.standard.set(categories, forKey: "quadrant.taskCategories.v1") }
     }
     @Published var blueprints: [BlueprintItem] = [] { didSet { persist { try persistence?.saveBlueprints(blueprints) } } }
     @Published var stages: [StageItem] = [] { didSet { persist { try persistence?.saveStages(stages) } } }
@@ -455,6 +463,7 @@ final class TaskStore: ObservableObject {
     }
 
     init(inMemory: Bool = false) {
+        categories = UserDefaults.standard.stringArray(forKey: "quadrant.taskCategories.v1") ?? []
         do {
             let persistence = try PersistenceController(inMemory: inMemory)
             let storedTasks = try persistence.loadTasks()
@@ -491,6 +500,7 @@ final class TaskStore: ObservableObject {
             reportError = "本地数据库暂不可用，已切换到兼容模式：\(error.localizedDescription)"
         }
         apiKey = KeychainStore.load(account: "deepseek-api-key") ?? ""
+        categories = Self.normalizedCategories(categories + tasks.compactMap(\.category))
         for anniversary in anniversaries {
             Task { await AnniversaryNotifications.configure(anniversary) }
         }
@@ -521,12 +531,56 @@ final class TaskStore: ObservableObject {
 
     var completionText: String { "\(completedToday.count)/\(todayTasks.filter { !$0.isCancelled }.count)" }
 
+    private static func normalizedCategories(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        return names.compactMap { name in
+            let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, seen.insert(value.localizedLowercase).inserted else { return nil }
+            return value
+        }
+    }
+
+    func addCategory(_ name: String) {
+        let updated = Self.normalizedCategories(categories + [name])
+        if updated != categories { categories = updated }
+    }
+
+    private func resolvedCategory(_ name: String?) -> String? {
+        let value = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !value.isEmpty else { return nil }
+        return categories.first { $0.localizedCaseInsensitiveCompare(value) == .orderedSame } ?? value
+    }
+
+    func renameCategory(_ oldName: String, to newName: String) -> Bool {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, categories.contains(oldName),
+              !categories.contains(where: { $0 != oldName && $0.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { return false }
+        categories = categories.map { $0 == oldName ? name : $0 }
+        tasks = tasks.map { task in
+            var updated = task
+            if updated.category == oldName { updated.category = name }
+            return updated
+        }
+        return true
+    }
+
+    func deleteCategory(_ name: String) {
+        categories.removeAll { $0 == name }
+        tasks = tasks.map { task in
+            var updated = task
+            if updated.category == name { updated.category = nil }
+            return updated
+        }
+    }
+
     func tasks(in quadrant: Quadrant, includeCompleted: Bool = false) -> [TaskItem] {
         tasks.filter { $0.quadrant == quadrant && (includeCompleted || $0.needsAction) }
             .sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
     }
 
     func add(_ task: TaskItem) {
+        var task = task
+        task.category = resolvedCategory(task.category)
         if let error = WorkflowGraph.validationError(task: task, dependencies: task.effectiveDependencyIDs, tasks: tasks) {
             actionMessage = error
             return
@@ -536,6 +590,7 @@ final class TaskStore: ObservableObject {
             return
         }
         tasks.insert(task, at: 0)
+        if let category = task.category { addCategory(category) }
     }
 
     @discardableResult
@@ -544,6 +599,7 @@ final class TaskStore: ObservableObject {
         let previous = tasks[index]
         let previousBlueprintID = previous.blueprintID
         var updated = task
+        updated.category = resolvedCategory(updated.category)
         if updated.workflowX == nil { updated.workflowX = previous.workflowX }
         if updated.workflowY == nil { updated.workflowY = previous.workflowY }
         if updated.workflowImages == nil { updated.workflowImages = previous.workflowImages }
@@ -567,6 +623,7 @@ final class TaskStore: ObservableObject {
             return false
         }
         tasks[index] = updated
+        if let category = updated.category { addCategory(category) }
         if previousBlueprintID != updated.blueprintID { removeCrossBlueprintDependents(of: updated) }
         return true
     }

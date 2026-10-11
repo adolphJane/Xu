@@ -37,7 +37,8 @@ extension TaskStore {
     func workspaceSnapshot() -> WorkspaceSnapshot {
         WorkspaceSnapshot(
             tasks: tasks, blueprints: blueprints, stages: stages, milestones: milestones,
-            reports: reports, anniversaries: anniversaries, weeklyReviews: weeklyReviews
+            reports: reports, anniversaries: anniversaries, weeklyReviews: weeklyReviews,
+            categories: categories
         )
     }
 
@@ -46,6 +47,7 @@ extension TaskStore {
             throw NSError(domain: "序数据", code: 2, userInfo: [NSLocalizedDescriptionKey: "备份校验失败，现有数据保持不变。"])
         }
         tasks = snapshot.tasks
+        categories = snapshot.categories ?? Array(Set(snapshot.tasks.compactMap(\.category))).sorted()
         blueprints = snapshot.blueprints
         stages = snapshot.stages
         milestones = snapshot.milestones
@@ -67,7 +69,7 @@ extension TaskStore {
             }
             output += "\n## 任务\n\n"
             for task in tasks.sorted(by: { $0.scheduledFor < $1.scheduledFor }) {
-                output += "- [\(task.isCompleted ? "x" : " ")] \(task.title) · \(task.projectName) · \(task.effectiveStatus.title) · \(task.scheduledFor.formatted(date: .numeric, time: .omitted))\n"
+                output += "- [\(task.isCompleted ? "x" : " ")] \(task.title) · \(task.projectName) · \(task.categoryName) · \(task.effectiveStatus.title) · \(task.scheduledFor.formatted(date: .numeric, time: .omitted))\n"
             }
             output += "\n## 纪念日\n\n"
             for item in anniversaries { output += "- \(item.name) · \(item.date.formatted(date: .long, time: .omitted))\n" }
@@ -76,10 +78,10 @@ extension TaskStore {
             return Data(output.utf8)
         case .csv:
             func quote(_ value: String) -> String { "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\"" }
-            var rows = ["id,title,project,status,quadrant,scheduledFor,dueDate,estimatedMinutes,notes"]
+            var rows = ["id,title,project,category,status,quadrant,scheduledFor,dueDate,estimatedMinutes,notes"]
             let iso = ISO8601DateFormatter()
             rows += tasks.map { task in
-                [task.id.uuidString, task.title, task.projectName, task.effectiveStatus.title, task.quadrant.title,
+                [task.id.uuidString, task.title, task.projectName, task.categoryName, task.effectiveStatus.title, task.quadrant.title,
                  iso.string(from: task.scheduledFor), task.dueDate.map(iso.string) ?? "", String(task.estimatedMinutes), task.notes]
                     .map(quote).joined(separator: ",")
             }

@@ -11,6 +11,7 @@
 - 聚焦工作台：当前重点、按蓝图汇总的今日行动、进度侧栏、全局快速添加与皮肤切换；交互动画支持“减少动态效果”
 - 统一添加面板：主按钮或 ⌘N 直接新增待办，箭头可切换补记完成或 AI 草稿；支持连续添加、蓝图关联、日期快捷选择和按需展开设置
 - 艾森豪威尔四象限任务板；任务可编辑、完成、删除或跨象限移动
+- 自定义任务类别：创建或编辑时填写类别，在“分类”页面按类别查看、重命名和删除；类别随 JSON 备份与文件夹同步保存
 - 菜单栏窗口：查看今日待办、勾选完成、快速新增、打开主界面
 - 可从菜单栏或今日页“补记已完成”事项，立即计入今日完成数和日报
 - 任务、蓝图、纪念日和日报持久化到本机 SwiftData；旧版任务可从 `UserDefaults` 迁移
@@ -35,23 +36,26 @@ swift run
 
 首次使用 AI 任务、蓝图、重新规划或日报前，请在“设置”中填写 DeepSeek API Key。日报请求包含当天相关任务的项目、标题、分类、象限、状态、预计时长，以及用户主动填写的备注、阻塞原因和日报补充。
 
-## 本地内测打包
+## 本地开发调试
 
-可在具备 Xcode 的 Mac 上执行下列命令，生成适用于 Apple Silicon 与 Intel Mac 的未公证 `.dmg`：
+开发时直接生成当前 Mac 架构的 `.app`，可双击打开调试：
 
 ```bash
-zsh scripts/package-macos.sh
+zsh scripts/build-app.sh
+open dist/序.app
 ```
 
-产物保存在 `dist/`。DMG 中同时包含“序”和“Applications”快捷入口，可直接拖动安装。无 Apple 开发者凭据时生成临时签名的内测包，首次打开仍会有 macOS 安全提示，操作见[内测安装说明](Packaging/INSTALL-TEST.md)。
+产物位于 `dist/序.app`。本地使用临时签名；首次打开可能出现 macOS 安全提示，操作见[内测安装说明](Packaging/INSTALL-TEST.md)。
+
+推送到 `main` 后，GitHub Actions 会生成 Apple Silicon 与 Intel 通用架构的预览 `.dmg`，可在对应运行记录的 **Artifacts** 中下载。预览包使用临时签名，不会创建 Release。
 
 ## GitHub Releases 自动打包
 
-将 `Packaging/Info.plist` 中的应用版本更新并提交后，推送对应的版本标签即可触发 GitHub Actions 自动构建通用架构 DMG，并创建 GitHub Release：
+正式发布时，将 `Packaging/Info.plist` 中的应用版本更新并提交，再推送对应的版本标签。GitHub Actions 会构建通用架构 DMG 并创建 GitHub Release：
 
 ```bash
-git tag v0.4.5
-git push origin v0.4.5
+git tag v0.4.6
+git push origin v0.4.6
 ```
 
 标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `Xu-v版本号.dmg` 会作为 Release 附件发布，说明会自动列出上一个版本标签之后的提交内容。配置下列 GitHub Actions Secrets 后，工作流会使用 Developer ID 签名、提交 Apple 公证并将公证票据附在 DMG 上：
