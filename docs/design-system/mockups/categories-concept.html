@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>序 · 分类页设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f5f1eb; --sidebar: #eee8df; --surface: #fffdfa; --surface-2: #faf7f2;
+      --ink: #302a27; --muted: #827a73; --subtle: #a79d93; --line: #e7dfd5;
+      --brand: #754c38; --brand-hover: #64402f; --brand-soft: #f0e5d9;
+      --green: #517463; --green-soft: #e9f0e9; --blue: #5d7592; --blue-soft: #e9eff5;
+      --amber: #9c7850; --amber-soft: #f4eadb; --shadow: 0 22px 70px #35291c1c, 0 3px 12px #35291c0b;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: #211f1e; --sidebar: #292623; --surface: #302c29; --surface-2: #38332f;
+      --ink: #f5f0e9; --muted: #b0a69c; --subtle: #8e847b; --line: #49423d;
+      --brand: #d5a785; --brand-hover: #e6b996; --brand-soft: #493b32;
+      --green: #a4ceb1; --green-soft: #34463a; --blue: #adc2da; --blue-soft: #394551;
+      --amber: #dec296; --amber-soft: #504338; --shadow: 0 22px 70px #0007, 0 3px 12px #0003;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: #e3dcd2; color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    html[data-theme="dark"] body { background: #171615; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .icon.sm { width: 15px; height: 15px; } .icon.lg { width: 20px; height: 20px; }
+    .app { display: flex; width: min(1440px, calc(100% - 48px)); min-height: 840px; margin: 30px auto; background: var(--canvas); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); }
+    .global-sidebar { width: 222px; flex: none; background: var(--sidebar); border-right: 1px solid var(--line); padding: 0 13px 18px; display: flex; flex-direction: column; }
+    .traffic { display: flex; gap: 8px; height: 62px; align-items: center; padding-left: 8px; }
+    .traffic span { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1px #0002; }
+    .traffic span:nth-child(1) { background: #ed6b61; } .traffic span:nth-child(2) { background: #f2bf4f; } .traffic span:nth-child(3) { background: #5cc666; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 7px 11px 27px; }
+    .brand-mark { display: grid; place-items: center; width: 35px; height: 35px; border-radius: 10px; color: #fff; background: #754c38; font: 600 20px/1 Georgia, serif; }
+    .brand strong { display: block; font-size: 14px; letter-spacing: .03em; } .brand small { display: block; margin-top: 1px; font-size: 10px; color: var(--muted); }
+    .nav-caption { padding: 0 14px; margin: 0 0 9px; color: var(--subtle); font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+    .nav-caption.records { margin-top: 26px; }
+    .nav-item { display: flex; align-items: center; gap: 12px; width: 100%; height: 41px; padding: 0 13px; border: 0; border-radius: 10px; color: var(--muted); background: transparent; text-align: left; font-size: 13px; font-weight: 500; }
+    .nav-item .icon { width: 17px; height: 17px; }
+    .nav-item.current { color: var(--brand); background: var(--brand-soft); font-weight: 650; }
+    .nav-item:hover, .category:hover { background: var(--brand-soft); }
+    .sidebar-foot { margin-top: auto; }
+    .quick { width: 100%; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 12px; }
+    .quick kbd { margin-left: auto; font: 10px/1 -apple-system, sans-serif; color: var(--subtle); }
+    .profile { display: flex; align-items: center; gap: 9px; padding: 16px 8px 0; font-size: 12px; color: var(--muted); }
+    .avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: #d6c2aa; color: #59412e; font-weight: 700; }
+    .workspace { flex: 1; min-width: 0; }
+    .topbar { height: 62px; padding: 0 33px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); background: var(--surface); }
+    .crumbs { display: flex; align-items: center; gap: 9px; color: var(--subtle); font-size: 12px; }
+    .crumbs strong { color: var(--ink); font-weight: 600; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 8px; }
+    .icon-button:hover { color: var(--ink); background: var(--surface-2); }
+    .divider { height: 20px; width: 1px; margin: 0 5px; background: var(--line); }
+    .top-action { height: 33px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); font-size: 12px; font-weight: 600; }
+    .top-action .icon { color: var(--brand); }
+    .page { max-width: 1190px; padding: 42px 46px 52px; margin: auto; }
+    .eyebrow { display: flex; align-items: center; gap: 9px; color: var(--brand); font-size: 10px; font-weight: 750; letter-spacing: .18em; }
+    .eyebrow .line { width: 20px; height: 1px; background: currentColor; opacity: .7; }
+    .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin: 12px 0 31px; }
+    h1 { margin: 0; font-size: 31px; line-height: 1.28; font-weight: 680; letter-spacing: -.035em; }
+    .page-heading p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+    .primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 16px; border: 1px solid transparent; border-radius: 11px; background: #754c38; color: #fff; font-size: 13px; font-weight: 650; box-shadow: 0 4px 10px #754c3824; white-space: nowrap; }
+    .primary:hover { background: #64402f; }
+    html[data-theme="dark"] .primary { background: #d5a785; color: #241b17; box-shadow: none; }
+    .content-grid { display: grid; grid-template-columns: 258px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .category-panel, .tasks-panel { background: var(--surface); border: 1px solid var(--line); border-radius: 17px; box-shadow: 0 4px 18px #5b42230a; }
+    .category-panel { padding: 18px 11px 13px; }
+    .panel-caption { padding: 0 13px; color: var(--subtle); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+    .panel-caption span { float: right; letter-spacing: 0; font-weight: 500; }
+    .category-list { margin-top: 11px; }
+    .category { display: flex; width: 100%; height: 43px; align-items: center; gap: 11px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); text-align: left; font-size: 13px; font-weight: 530; }
+    .category .icon { color: var(--muted); }
+    .category.selected { background: var(--brand-soft); color: var(--brand); font-weight: 680; }
+    .category.selected .icon { color: var(--brand); }
+    .count { margin-left: auto; color: var(--subtle); font-variant-numeric: tabular-nums; font-size: 11px; }
+    .category.selected .count { color: var(--brand); }
+    .category-rule { height: 1px; margin: 12px 12px 16px; background: var(--line); }
+    .category-marker { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .category-marker.work { background: #9b7567; } .category-marker.life { background: #86a496; } .category-marker.learn { background: #829eb9; } .category-marker.other { background: #b09a75; }
+    .add-category { margin: 17px 4px 0; padding: 13px 8px 0; border-top: 1px solid var(--line); }
+    .add-category-label { display: block; margin: 0 0 8px 4px; color: var(--muted); font-size: 11px; }
+    .add-category-row { display: flex; gap: 6px; }
+    .add-category input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: var(--surface-2); color: var(--ink); font-size: 12px; }
+    .add-category input::placeholder { color: var(--subtle); }
+    .add-category button { width: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: var(--brand); background: var(--surface-2); }
+    .tasks-panel { min-height: 570px; overflow: hidden; }
+    .tasks-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 25px 27px 22px; }
+    .tasks-title { display: flex; align-items: center; gap: 11px; }
+    .tasks-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); }
+    h2 { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: -.02em; font-weight: 680; }
+    .tasks-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+    .tasks-tools { display: none; align-items: center; gap: 6px; }
+    .tasks-tools .icon-button { width: 32px; height: 32px; }
+    .filters { display: flex; align-items: center; gap: 4px; padding: 0 27px 18px; border-bottom: 1px solid var(--line); }
+    .filter { min-height: 31px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 560; white-space: nowrap; }
+    .filter.active { background: var(--brand-soft); color: var(--brand); font-weight: 700; }
+    .filter-sep { flex: 1; }
+    .sort-label { display: flex; align-items: center; gap: 5px; color: var(--subtle); font-size: 11px; white-space: nowrap; }
+    .task-list { padding: 3px 27px 0; }
+    .task { display: flex; align-items: flex-start; gap: 13px; padding: 21px 0; border-bottom: 1px solid var(--line); }
+    .task:last-child { border-bottom: 0; }
+    .task-check { display: grid; place-items: center; width: 18px; height: 18px; flex: none; margin-top: 2px; padding: 0; border: 1.7px solid #baa99a; border-radius: 6px; background: transparent; color: var(--brand); }
+    .task.done .task-check { background: var(--green); border-color: var(--green); color: #fff; }
+    .task-body { min-width: 0; flex: 1; }
+    .task-title { display: block; margin: 0 0 8px; color: var(--ink); font-size: 13px; font-weight: 650; line-height: 1.5; }
+    .task.done .task-title { color: var(--muted); text-decoration: line-through; }
+    .task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 11px; color: var(--muted); font-size: 11px; }
+    .task-meta span { display: inline-flex; align-items: center; gap: 5px; }
+    .task-meta .icon { width: 12px; height: 12px; }
+    .task-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--subtle); }
+    .tag { padding: 3px 7px; border-radius: 6px; background: var(--brand-soft); color: var(--brand); font-size: 10px; font-weight: 650; }
+    .tag.life { color: var(--green); background: var(--green-soft); } .tag.learn { color: var(--blue); background: var(--blue-soft); }
+    .task .icon-button { margin: -5px -5px 0 0; width: 32px; height: 32px; }
+    .bottom-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 27px 22px; color: var(--subtle); font-size: 11px; }
+    .bottom-note button { border: 0; padding: 0; color: var(--brand); background: transparent; font-weight: 650; }
+    .empty { display: none; min-height: 346px; padding: 57px 20px 40px; text-align: center; }
+    .empty-art { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 20px; border-radius: 20px; background: var(--brand-soft); color: var(--brand); }
+    .empty-art .icon { width: 30px; height: 30px; stroke-width: 1.4; }
+    .empty h3 { margin: 0; font-size: 16px; font-weight: 680; }
+    .empty p { margin: 7px 0 20px; color: var(--muted); font-size: 12px; }
+    .empty .primary { min-height: 35px; }
+    body.show-empty .task-list, body.show-empty .bottom-note { display: none; }
+    body.show-empty .empty { display: block; }
+    .mobile-bar, .mobile-rail { display: none; }
+    @media (max-width: 930px) and (min-width: 701px) { .global-sidebar { width: 195px; } .page { padding: 36px 26px; } .content-grid { grid-template-columns: 220px minmax(0, 1fr); gap: 14px; } }
+    @media (max-width: 700px) {
+      body, html[data-theme="dark"] body { background: var(--canvas); }
+      .app { display: block; width: 100%; min-height: 100vh; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+      .global-sidebar, .topbar, .category-panel { display: none; }
+      .mobile-bar { display: flex; height: 58px; padding: 0 14px 0 20px; align-items: center; justify-content: space-between; background: var(--canvas); }
+      .mobile-bar .brand-mark { width: 30px; height: 30px; border-radius: 9px; font-size: 17px; }
+      .mobile-bar .mobile-title { font-size: 15px; font-weight: 680; }
+      .mobile-bar .icon-button { width: 44px; height: 44px; }
+      .page { padding: 20px 20px 44px; }
+      .eyebrow { font-size: 9px; }
+      .page-heading { margin: 10px 0 25px; align-items: flex-start; }
+      h1 { font-size: 29px; }
+      .page-heading p { max-width: 245px; margin-top: 6px; font-size: 12px; }
+      .page-heading .primary { display: none; }
+      .mobile-rail { display: flex; gap: 7px; margin: 0 -20px 19px; padding: 0 20px 3px; overflow-x: auto; scrollbar-width: none; }
+      .mobile-rail::-webkit-scrollbar { display: none; }
+      .mobile-chip { display: inline-flex; align-items: center; gap: 5px; height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--muted); white-space: nowrap; font-size: 13px; font-weight: 600; }
+      .mobile-chip.selected { border-color: transparent; background: var(--brand-soft); color: var(--brand); }
+      .mobile-chip.add { color: var(--brand); }
+      .content-grid { display: block; }
+      .tasks-panel { min-height: 480px; border-radius: 15px; }
+      .tasks-heading { padding: 21px 18px 20px; }
+      h2 { font-size: 18px; }
+      .tasks-icon { width: 32px; height: 32px; }
+      .filters { padding: 0 18px 14px; }
+      .filter { min-height: 44px; padding: 0 10px; font-size: 13px; }
+      .sort-label { display: none; }
+      .task-list { padding: 0 18px; }
+      .task { gap: 6px; padding: 17px 0; }
+      .task-check { position: relative; width: 44px; height: 44px; margin: -11px 0 0 -13px; border: 0; }
+      .task-check::after { content: ""; width: 18px; height: 18px; border: 1.7px solid #baa99a; border-radius: 6px; }
+      .task-title { font-size: 15px; }
+      .task-meta { gap: 6px 8px; font-size: 12px; }
+      .task .icon-button { width: 44px; height: 44px; margin: -11px -12px 0 0; }
+      .tag { display: none; }
+      .bottom-note { padding: 17px 18px 20px; }
+      .empty .primary { min-height: 44px; }
+      .mobile-add { position: fixed; right: 22px; bottom: max(26px, env(safe-area-inset-bottom)); width: 52px; height: 52px; display: grid; place-items: center; border: none; border-radius: 16px; background: #754c38; color: #fff; box-shadow: 0 9px 23px #5436234d; z-index: 2; }
+      html[data-theme="dark"] .mobile-add { background: #d5a785; color: #241b17; }
+      .mobile-add .icon { width: 23px; height: 23px; }
+    }
+    @media (min-width: 701px) { .mobile-add { display: none; } }
+    @media (prefers-reduced-motion: no-preference) { button { transition: background .18s ease, color .18s ease; } }
+  </style>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden">
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.3 13.5 13.5 20.3a2 2 0 0 1-2.8 0l-7-7a2 2 0 0 1-.6-1.4V5.2a2 2 0 0 1 2-2h6.7c.5 0 1 .2 1.4.6l7.1 7a2 2 0 0 1 0 2.7Z"/><circle cx="8" cy="8" r="1"/></symbol>
+    <symbol id="i-stack" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="2"/><path d="M7 4h10"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6c-2-1.3-5-1.7-9-1v14c4-.7 7-.3 9 1 2-1.3 5-1.7 9-1V5c-4-.7-7-.3-9 1Zm0 0v14"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 9c0 4.6-8.8 10-8.8 10S3.2 13.6 3.2 9a4.5 4.5 0 0 1 8.8-1.2A4.5 4.5 0 0 1 20.8 9Z"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 0v6h5M8 13h8M8 17h8"/></symbol>
+    <symbol id="i-tray" viewBox="0 0 24 24"><path d="M4 4h16l2 11v5H2v-5L4 4Zm-2 11h6l1 3h6l1-3h6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M8 5l7 7-7 7"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  </svg>
+  <div class="app">
+    <aside class="global-sidebar" aria-label="应用导航">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="brand"><span class="brand-mark">序</span><span><strong>序</strong><small>把计划变成行动</small></span></div>
+      <div class="nav-caption">工作区</div>
+      <button class="nav-item"><svg class="icon"><use href="#i-sun"/></svg>今日</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-book"/></svg>蓝图</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-grid"/></svg>四象限</button>
+      <button class="nav-item current"><svg class="icon"><use href="#i-tag"/></svg>分类</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-calendar"/></svg>日历计划</button>
+      <div class="nav-caption records">记录</div>
+      <button class="nav-item"><svg class="icon"><use href="#i-tray"/></svg>收集箱</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-heart"/></svg>纪念日</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-check-circle"/></svg>已处理</button>
+      <button class="nav-item"><svg class="icon"><use href="#i-file"/></svg>日报</button>
+      <div class="sidebar-foot"><button class="quick"><svg class="icon sm"><use href="#i-search"/></svg>快速操作<kbd>⌘⇧␣</kbd></button><div class="profile"><span class="avatar">L</span>我的工作区</div></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><div class="crumbs"><span>工作区</span><svg class="icon sm"><use href="#i-arrow"/></svg><strong>分类</strong></div><div class="top-actions"><button class="icon-button" id="theme-toggle" aria-label="切换明暗外观" title="切换明暗外观"><svg class="icon"><use href="#i-moon"/></svg></button><span class="divider"></span><button class="icon-button" aria-label="搜索" title="搜索"><svg class="icon"><use href="#i-search"/></svg></button></div></header>
+      <div class="mobile-bar"><span class="brand-mark">序</span><span class="mobile-title">分类</span><span style="display:flex"><button class="icon-button" id="mobile-theme-toggle" aria-label="切换明暗外观"><svg class="icon"><use href="#i-moon"/></svg></button><button class="icon-button" id="mobile-category-create" aria-label="添加类别"><svg class="icon"><use href="#i-plus"/></svg></button></span></div>
+      <main class="page">
+        <div class="eyebrow"><span class="line"></span>ORGANIZE YOUR WORK</div>
+        <div class="page-heading"><div><h1>任务分类</h1><p>把相近的事放在一起，让每一步都更清晰。</p></div><button class="primary"><svg class="icon sm"><use href="#i-plus"/></svg>新建任务</button></div>
+        <div class="mobile-rail" aria-label="类别"><button class="mobile-chip selected" data-category="all">所有类别 <span>12</span></button><button class="mobile-chip" data-category="uncategorized">未分类 <span>2</span></button><button class="mobile-chip" data-category="work">工作 <span>5</span></button><button class="mobile-chip" data-category="life">生活 <span>3</span></button><button class="mobile-chip" data-category="learn">学习 <span>2</span></button><button class="mobile-chip add" id="mobile-add-category"><svg class="icon sm"><use href="#i-plus"/></svg>新类别</button></div>
+        <div class="content-grid">
+          <aside class="category-panel" aria-label="类别列表">
+            <div class="panel-caption">类别概览 <span>12 项任务</span></div>
+            <div class="category-list">
+              <button class="category selected" data-category="all"><svg class="icon"><use href="#i-stack"/></svg>所有类别<span class="count">12</span></button>
+              <button class="category" data-category="uncategorized"><svg class="icon"><use href="#i-tag"/></svg>未分类<span class="count">2</span></button>
+              <div class="category-rule"></div>
+              <div class="panel-caption">我的类别</div>
+              <button class="category" data-category="work"><span class="category-marker work"></span>工作<span class="count">5</span></button>
+              <button class="category" data-category="life"><span class="category-marker life"></span>生活<span class="count">3</span></button>
+              <button class="category" data-category="learn"><span class="category-marker learn"></span>学习<span class="count">2</span></button>
+            </div>
+            <div class="add-category"><label class="add-category-label" for="new-category">添加类别</label><div class="add-category-row"><input id="new-category" placeholder="输入类别名称…" aria-label="新类别名称"><button id="add-category" aria-label="添加类别" title="添加类别"><svg class="icon sm"><use href="#i-plus"/></svg></button></div></div>
+          </aside>
+          <section class="tasks-panel" aria-label="分类中的任务">
+            <div class="tasks-heading"><div class="tasks-title"><span class="tasks-icon"><svg class="icon"><use href="#i-stack"/></svg></span><div><h2 id="selection-title">所有类别</h2><p id="selection-count">12 项任务 · 8 项待处理</p></div></div><div class="tasks-tools"><button class="icon-button" id="category-menu" aria-label="管理类别" title="重命名或删除类别"><svg class="icon"><use href="#i-more"/></svg></button></div></div>
+            <div class="filters"><button class="filter active" data-scope="active">待处理 <span>8</span></button><button class="filter" data-scope="processed">已处理 <span>4</span></button><button class="filter" data-scope="all">全部 <span>12</span></button><span class="filter-sep"></span><span class="sort-label"><svg class="icon sm"><use href="#i-clock"/></svg>按计划时间排序</span></div>
+            <div class="task-list">
+              <div class="task" data-task-category="work"><button class="task-check" aria-label="完成任务"></button><div class="task-body"><span class="task-title">整理产品发布清单，确认最后一轮细节</span><div class="task-meta"><span><svg class="icon"><use href="#i-calendar"/></svg>今天 14:00</span><span class="dot"></span><span>产品迭代</span></div></div><span class="tag">工作</span><button class="icon-button" aria-label="更改任务类别" title="更改任务类别"><svg class="icon"><use href="#i-more"/></svg></button></div>
+              <div class="task" data-task-category="work"><button class="task-check" aria-label="完成任务"></button><div class="task-body"><span class="task-title">和设计团队同步新版首页的交互方案</span><div class="task-meta"><span><svg class="icon"><use href="#i-calendar"/></svg>明天 10:30</span><span class="dot"></span><span>产品迭代</span></div></div><span class="tag">工作</span><button class="icon-button" aria-label="更改任务类别" title="更改任务类别"><svg class="icon"><use href="#i-more"/></svg></button></div>
+              <div class="task" data-task-category="life"><button class="task-check" aria-label="完成任务"></button><div class="task-body"><span class="task-title">预约周末的年度体检</span><div class="task-meta"><span><svg class="icon"><use href="#i-calendar"/></svg>周五</span><span class="dot"></span><span>个人安排</span></div></div><span class="tag life">生活</span><button class="icon-button" aria-label="更改任务类别" title="更改任务类别"><svg class="icon"><use href="#i-more"/></svg></button></div>
+              <div class="task" data-task-category="learn"><button class="task-check" aria-label="完成任务"></button><div class="task-body"><span class="task-title">读完《设计心理学》第三章并整理笔记</span><div class="task-meta"><span><svg class="icon"><use href="#i-calendar"/></svg>周六</span><span class="dot"></span><span>持续学习</span></div></div><span class="tag learn">学习</span><button class="icon-button" aria-label="更改任务类别" title="更改任务类别"><svg class="icon"><use href="#i-more"/></svg></button></div>
+            </div>
+            <div class="bottom-note"><span>显示 4 项，另外还有 4 项待处理任务</span><button>查看全部任务 →</button></div>
+            <div class="empty"><div class="empty-art"><svg class="icon"><use href="#i-tag"/></svg></div><h3>这个类别还没有待处理任务</h3><p>新建一项任务，或切换状态查看已有记录。</p><button class="primary"><svg class="icon sm"><use href="#i-plus"/></svg>新建任务</button></div>
+          </section>
+        </div>
+      </main>
+      <button class="mobile-add" aria-label="新建任务"><svg class="icon"><use href="#i-plus"/></svg></button>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    if (params.get('theme') === 'dark') document.documentElement.dataset.theme = 'dark';
+    if (params.get('state') === 'empty') document.body.classList.add('show-empty');
+    function toggleTheme() { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; }
+    document.querySelectorAll('#theme-toggle, #mobile-theme-toggle').forEach(b => b.addEventListener('click', toggleTheme));
+    document.getElementById('category-menu').addEventListener('click', () => alert('设计演示：重命名类别 / 删除类别'));
+    document.getElementById('mobile-add-category').addEventListener('click', () => alert('设计演示：创建类别'));
+    document.getElementById('mobile-category-create').addEventListener('click', () => alert('设计演示：创建类别'));
+    const names = { all:'所有类别', uncategorized:'未分类', work:'工作', life:'生活', learn:'学习' };
+    const totals = { all:[12,8], uncategorized:[2,0], work:[5,4], life:[3,2], learn:[2,2] };
+    document.querySelectorAll('[data-category]').forEach(button => button.addEventListener('click', () => {
+      const key = button.dataset.category;
+      document.querySelectorAll('[data-category]').forEach(b => b.classList.toggle('selected', b.dataset.category === key));
+      document.getElementById('selection-title').textContent = names[key];
+      document.getElementById('selection-count').textContent = `${totals[key][0]} 项任务 · ${totals[key][1]} 项待处理`;
+      document.querySelector('[data-scope="active"] span').textContent = totals[key][1];
+      document.querySelector('[data-scope="processed"] span').textContent = totals[key][0] - totals[key][1];
+      document.querySelector('[data-scope="all"] span').textContent = totals[key][0];
+      const visibleSamples = document.querySelectorAll(key === 'all' ? '[data-task-category]' : `[data-task-category="${key}"]`).length;
+      document.querySelector('.bottom-note span').textContent = `显示 ${visibleSamples} 项，另外还有 ${Math.max(0, totals[key][1] - visibleSamples)} 项待处理任务`;
+      document.querySelector('.tasks-tools').style.display = ['work','life','learn'].includes(key) ? 'flex' : 'none';
+      document.querySelectorAll('[data-task-category]').forEach(row => row.style.display = key === 'all' || row.dataset.taskCategory === key ? '' : 'none');
+      document.body.classList.toggle('show-empty', key === 'uncategorized');
+    }));
+    if (params.has('category')) document.querySelector(`[data-category="${params.get('category')}"]`)?.click();
+    document.querySelectorAll('[data-scope]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-scope]').forEach(b => b.classList.toggle('active', b === button));
+      document.body.classList.toggle('show-empty', button.dataset.scope === 'processed');
+    }));
+    document.getElementById('add-category').addEventListener('click', () => {
+      const input = document.getElementById('new-category');
+      if (input.value.trim()) { alert(`设计演示：添加「${input.value.trim()}」类别`); input.value = ''; }
+    });
+  </script>
+</body>
+</html>

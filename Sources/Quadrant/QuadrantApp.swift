@@ -1,9 +1,14 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 import Security
 import SwiftUI
 import UserNotifications
 
+#if os(macOS)
 @main
 struct QuadrantApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -21,6 +26,14 @@ struct QuadrantApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("添加事项") {
+                    NotificationCenter.default.post(name: .showTaskComposer, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
+        }
 
         WindowGroup("序小组件", id: "widget") {
             CompactWidgetView()
@@ -52,6 +65,7 @@ struct QuadrantApp: App {
         }
     }
 }
+#endif
 
 enum AppearanceMode: String, CaseIterable, Identifiable {
     case system = "跟随系统"
@@ -127,12 +141,24 @@ final class AppPreferences: ObservableObject {
     }
     var pageBackground: Color {
         if highContrast { return colorScheme == .dark ? .black : .white }
-        if resolvedPreset == .system && customBackgroundHex.isEmpty { return Color(nsColor: .windowBackgroundColor) }
+        if resolvedPreset == .system && customBackgroundHex.isEmpty {
+            #if os(macOS)
+            return Color(nsColor: .windowBackgroundColor)
+            #else
+            return Color(uiColor: .systemBackground)
+            #endif
+        }
         return Color(appHex: customBackgroundHex.isEmpty ? resolvedPreset.backgroundHex : customBackgroundHex)
     }
     var cardBackground: Color {
         if highContrast { return colorScheme == .dark ? Color(appHex: "101010") : .white }
-        if resolvedPreset == .system && customCardHex.isEmpty { return Color(nsColor: .controlBackgroundColor) }
+        if resolvedPreset == .system && customCardHex.isEmpty {
+            #if os(macOS)
+            return Color(nsColor: .controlBackgroundColor)
+            #else
+            return Color(uiColor: .secondarySystemBackground)
+            #endif
+        }
         return Color(appHex: customCardHex.isEmpty ? resolvedPreset.cardHex : customCardHex)
     }
     var contrastIsReadable: Bool {
@@ -591,6 +617,38 @@ final class TaskStore: ObservableObject {
         }
         tasks.insert(task, at: 0)
         if let category = task.category { addCategory(category) }
+    }
+
+    /// Saves one task tree as a single collection update, after validating every task.
+    @discardableResult
+    func addTaskTree(parent: TaskItem, children: [TaskItem]) -> Bool {
+        let incoming = [parent] + children
+        let incomingIDs = incoming.map(\.id)
+        guard Set(incomingIDs).count == incoming.count,
+              incomingIDs.allSatisfy({ id in !tasks.contains(where: { $0.id == id }) }),
+              children.allSatisfy({ $0.parentTaskID == parent.id }) else {
+            actionMessage = "任务结构无效，请重试。"
+            return false
+        }
+        let resolved = incoming.map { original in
+            var task = original
+            task.category = resolvedCategory(task.category)
+            return task
+        }
+        let combined = tasks + resolved
+        for task in resolved {
+            if let error = WorkflowGraph.validationError(task: task, dependencies: task.effectiveDependencyIDs, tasks: combined) {
+                actionMessage = error
+                return false
+            }
+            if task.isCompleted, let reason = WorkflowGraph.blockingReason(for: task, tasks: combined, blueprints: blueprints) {
+                actionMessage = reason
+                return false
+            }
+        }
+        tasks.insert(contentsOf: resolved, at: 0)
+        for category in Set(resolved.compactMap(\.category)) { addCategory(category) }
+        return true
     }
 
     @discardableResult

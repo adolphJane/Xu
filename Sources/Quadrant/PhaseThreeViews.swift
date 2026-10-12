@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct CommandPaletteView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    @FocusState private var queryFocused: Bool
     let perform: (CommandPaletteAction) -> Void
 
     private var commands: [CommandPaletteAction] {
@@ -16,7 +17,10 @@ struct CommandPaletteView: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "command").foregroundStyle(.secondary)
-                TextField("搜索命令", text: $query).textFieldStyle(.plain).font(.title3)
+                TextField("搜索命令", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($queryFocused)
                 Text("⌘⇧Space").font(.caption.monospaced()).foregroundStyle(.secondary)
             }
             .padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -36,6 +40,7 @@ struct CommandPaletteView: View {
                 }
             }
         }.padding(18).frame(width: 520, height: 460)
+            .onAppear { queryFocused = true }
     }
 }
 

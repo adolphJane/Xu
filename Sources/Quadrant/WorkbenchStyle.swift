@@ -25,10 +25,8 @@ struct WorkbenchTopBar: View {
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.openSettings) private var openSettings
     let section: AppSection
-    let onCommand: () -> Void
-    let onAddTask: () -> Void
-    let onAddCompleted: () -> Void
-    let onAddWithAI: () -> Void
+    @Binding var isCommandPalettePresented: Bool
+    let performCommand: (CommandPaletteAction) -> Void
 
     var body: some View {
         HStack(spacing: 13) {
@@ -40,12 +38,16 @@ struct WorkbenchTopBar: View {
             Text(section.rawValue)
                 .fontWeight(.semibold)
             Spacer(minLength: 12)
-            Button(action: onCommand) {
+            Button { isCommandPalettePresented = true } label: {
                 Image(systemName: "magnifyingglass")
                     .comfortableIconTarget()
             }
             .help("搜索与快速操作")
             .accessibilityLabel("搜索与快速操作")
+            .popover(isPresented: $isCommandPalettePresented, arrowEdge: .bottom) {
+                CommandPaletteView(perform: performCommand)
+                    .background(preferences.pageBackground)
+            }
             Menu {
                 Button("石墨", systemImage: "circle.lefthalf.filled") { setTheme(.stone) }
                 Button("纸张", systemImage: "sun.max") { setTheme(.paper) }
@@ -64,13 +66,6 @@ struct WorkbenchTopBar: View {
             }
             .help("应用设置")
             .accessibilityLabel("应用设置")
-            AddTaskControl(
-                onAddTask: onAddTask,
-                onAddCompleted: onAddCompleted,
-                onAddWithAI: onAddWithAI,
-                shortcut: KeyboardShortcut("n", modifiers: .command)
-            )
-                .buttonStyle(.borderedProminent)
         }
         .font(.system(size: 13))
         .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))

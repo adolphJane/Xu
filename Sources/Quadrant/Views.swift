@@ -4,6 +4,7 @@ import SwiftUI
 enum AppSection: String, CaseIterable, Identifiable {
     case inbox = "收集箱"
     case today = "今日"
+    case tasks = "事项"
     case blueprints = "蓝图"
     case quadrants = "四象限"
     case categories = "分类"
@@ -17,6 +18,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .inbox: "tray"
         case .today: "sun.max"
+        case .tasks: "checklist"
         case .blueprints: "point.3.connected.trianglepath.dotted"
         case .quadrants: "square.grid.2x2"
         case .categories: "tag"
@@ -29,13 +31,21 @@ enum AppSection: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    private struct TaskBlueprintRoute: Identifiable {
+        let id = UUID()
+        let taskID: UUID
+        let blueprintID: UUID?
+    }
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var selection: AppSection? = .today
     @State private var composerMode: TaskComposerMode?
+    @State private var composerCancelRequest = 0
     @State private var selectedTask: TaskItem?
+    @State private var taskBlueprintRoute: TaskBlueprintRoute?
+    @State private var showsBlueprintLibrary = false
     @State private var isReportPresented = false
     @State private var isCommandPalettePresented = false
     @State private var isAIBlueprintPresented = false
@@ -53,10 +63,8 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 WorkbenchTopBar(
                     section: selection ?? .today,
-                    onCommand: { isCommandPalettePresented = true },
-                    onAddTask: { composerMode = .task },
-                    onAddCompleted: { composerMode = .completed },
-                    onAddWithAI: { composerMode = .ai }
+                    isCommandPalettePresented: $isCommandPalettePresented,
+                    performCommand: performCommand
                 )
                 Group {
                     switch selection ?? .today {
@@ -67,6 +75,11 @@ struct ContentView: View {
                         onAddTask: { composerMode = .task },
                         onAddCompleted: { composerMode = .completed },
                         onAddWithAI: { composerMode = .ai }
+                    )
+                    case .tasks: TasksHubView(
+                        showsBlueprintLibrary: $showsBlueprintLibrary,
+                        onSelect: { selectedTask = $0 },
+                        onAddTask: { composerMode = .task }
                     )
                     case .blueprints: BlueprintsView()
                     case .quadrants: QuadrantBoard(onSelect: { selectedTask = $0 })
@@ -84,10 +97,41 @@ struct ContentView: View {
             .appSurface()
             .ignoresSafeArea(.container, edges: .top)
         }
-        .sheet(item: $composerMode) { TaskComposerView(mode: $0) }
+        .overlay {
+            if let mode = composerMode {
+                GeometryReader { geometry in
+                    ZStack {
+                        Color.black.opacity(0.18)
+                            .contentShape(Rectangle())
+                            .onTapGesture { composerCancelRequest += 1 }
+                        TaskComposerView(
+                            mode: mode,
+                            cancelRequest: composerCancelRequest,
+                            onClose: { composerMode = nil }
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .shadow(color: .black.opacity(0.2), radius: 28, y: 12)
+                        .contentShape(Rectangle())
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+                .ignoresSafeArea()
+                .zIndex(10)
+            }
+        }
         .sheet(item: $selectedTask) { task in TaskEditor(task: task) }
+        .sheet(item: $taskBlueprintRoute) { route in
+            if let blueprintID = route.blueprintID,
+               store.blueprints.contains(where: { $0.id == blueprintID }) {
+                BlueprintDetailView(blueprintID: blueprintID, focusTaskID: route.taskID)
+            } else {
+                TaskBlueprintView(
+                    rootTaskID: TaskTreeProjection.rootID(containing: route.taskID, in: store.tasks),
+                    focusTaskID: route.taskID
+                )
+            }
+        }
         .sheet(isPresented: $isReportPresented) { DailyReportView() }
-        .sheet(isPresented: $isCommandPalettePresented) { CommandPaletteView(perform: performCommand) }
         .sheet(isPresented: $isAIBlueprintPresented) { AIBlueprintCreatorView() }
         .sheet(isPresented: $isSyncConflictPresented) {
             if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) }
@@ -101,6 +145,15 @@ struct ContentView: View {
             Text(store.actionMessage ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in isCommandPalettePresented = true }
+        .onReceive(NotificationCenter.default.publisher(for: .showTaskComposer)) { _ in composerMode = .task }
+        .onReceive(NotificationCenter.default.publisher(for: .showTaskBlueprint)) { notification in
+            guard let taskID = notification.object as? UUID else { return }
+            selection = .tasks
+            taskBlueprintRoute = TaskBlueprintRoute(
+                taskID: taskID,
+                blueprintID: notification.userInfo?["blueprintID"] as? UUID
+            )
+        }
         .onReceive(syncTimer) { _ in
             guard preferences.syncEnabled, !preferences.syncFolderPath.isEmpty, store.syncConflict == nil else { return }
             do {
@@ -127,7 +180,9 @@ struct ContentView: View {
         case .aiBlueprint: isAIBlueprintPresented = true
         case .dailyReport: isReportPresented = true
         case .openToday: selection = .today
-        case .openBlueprints: selection = .blueprints
+        case .openBlueprints:
+            showsBlueprintLibrary = true
+            selection = .tasks
         case .openAnniversaries: selection = .anniversaries
         case .openWidget: openWindow(id: "widget")
         case .toggleFocusTheme: preferences.focusThemeActive.toggle()
@@ -142,7 +197,7 @@ struct SidebarView: View {
     @Binding var selection: AppSection?
     let onCommand: () -> Void
 
-    private let primarySections: [AppSection] = [.today, .blueprints, .quadrants, .categories, .calendar]
+    private let primarySections: [AppSection] = [.today, .tasks, .categories, .calendar]
     private let recordSections: [AppSection] = [.inbox, .anniversaries, .completed, .report]
 
     var body: some View {
@@ -250,35 +305,47 @@ struct AddTaskControl: View {
     var shortcut: KeyboardShortcut? = nil
 
     var body: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: 0) {
             Button(action: onAddTask) {
-                Label(compact ? "" : "添加事项", systemImage: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(minWidth: compact ? 40 : 92, minHeight: 40)
+                HStack(spacing: AppSpacing.x2) {
+                    Image(systemName: "plus")
+                    if !compact { Text("添加事项") }
+                }
+                    .font(AppTypography.callout.weight(.semibold))
+                    .padding(.horizontal, compact ? 0 : AppSpacing.x3)
+                    .frame(minWidth: compact ? 34 : 92, minHeight: 34)
                     .contentShape(Rectangle())
             }
             .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
             .keyboardShortcut(shortcut)
             .help(shortcut == nil ? "直接添加待办事项" : "直接添加待办事项（⌘N）")
             .accessibilityLabel("添加待办事项")
+            Rectangle()
+                .fill(AppColors.foreground(on: preferences.accentColor).opacity(0.22))
+                .frame(width: 1, height: 18)
             Menu {
                 Button("新增待办", systemImage: "plus.circle", action: onAddTask)
                 Button("记录已完成", systemImage: "checkmark.circle", action: onAddCompleted)
                 Button("AI 一句话生成", systemImage: "sparkles", action: onAddWithAI)
             } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .bold))
-                    .frame(width: 40, height: 40)
+                Color.clear
+                    .frame(width: 32, height: 34)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+            .overlay {
+                Image(systemName: "chevron.down")
+                    .font(AppTypography.caption.weight(.semibold))
+                    .foregroundStyle(AppColors.foreground(on: preferences.accentColor))
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
             .help("选择添加方式")
             .accessibilityLabel("选择添加方式")
         }
-        .foregroundStyle(.white)
-        .background(preferences.accentColor, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(.white.opacity(0.13)))
+        .foregroundStyle(AppColors.foreground(on: preferences.accentColor))
+        .background(preferences.accentColor, in: RoundedRectangle(cornerRadius: AppRadius.control))
     }
 }
 
@@ -304,8 +371,7 @@ struct PageHeader: View {
             }
             Spacer()
             if let action {
-                Button(action: action) { Label(actionTitle, systemImage: "plus") }
-                    .buttonStyle(.borderedProminent)
+                AppButton(title: actionTitle, systemImage: "plus", tint: preferences.accentColor, action: action)
             }
         }
     }
@@ -626,8 +692,14 @@ struct QuadrantPanel: View {
 }
 
 struct TaskList: View {
+    @State private var collapsedRootIDs: Set<UUID> = []
     let tasks: [TaskItem]
     let onSelect: (TaskItem) -> Void
+
+    private var visibleRoots: [TaskItem] {
+        let ids = Set(tasks.map(\.id))
+        return tasks.filter { $0.parentTaskID.map { !ids.contains($0) } ?? true }
+    }
 
     var body: some View {
         LazyVStack(spacing: 9) {
@@ -635,7 +707,46 @@ struct TaskList: View {
                 ContentUnavailableView("今天还没有安排事项", systemImage: "checklist", description: Text("从收集箱开始，安排一件重要的事。"))
                     .frame(maxWidth: .infinity, minHeight: 220)
             }
-            ForEach(tasks) { task in TaskCard(task: task, onSelect: onSelect) }
+            ForEach(visibleRoots) { task in
+                TaskListTreeRow(task: task, tasks: tasks, depth: 0,
+                                collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
+            }
+        }
+    }
+}
+
+private struct TaskListTreeRow: View {
+    let task: TaskItem
+    let tasks: [TaskItem]
+    let depth: Int
+    @Binding var collapsedRootIDs: Set<UUID>
+    let onSelect: (TaskItem) -> Void
+
+    private var children: [TaskItem] { tasks.filter { $0.parentTaskID == task.id && $0.id != task.id } }
+
+    var body: some View {
+        HStack(spacing: AppSpacing.x2) {
+            if !children.isEmpty {
+                Button {
+                    if collapsedRootIDs.contains(task.id) { collapsedRootIDs.remove(task.id) }
+                    else { collapsedRootIDs.insert(task.id) }
+                } label: {
+                    Image(systemName: collapsedRootIDs.contains(task.id) ? "chevron.right" : "chevron.down")
+                        .frame(width: 26, height: 36)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(collapsedRootIDs.contains(task.id) ? "展开\(task.title)的子任务" : "收起\(task.title)的子任务")
+            } else if depth > 0 {
+                Color.clear.frame(width: 26, height: 1)
+            }
+            TaskCard(task: task, onSelect: onSelect)
+        }
+        .padding(.leading, CGFloat(depth) * AppSpacing.x6)
+        if !collapsedRootIDs.contains(task.id) && depth < 20 {
+            ForEach(children) { child in
+                TaskListTreeRow(task: child, tasks: tasks, depth: depth + 1,
+                                collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
+            }
         }
     }
 }
@@ -650,22 +761,30 @@ struct TaskCard: View {
     var compact = false
     let onSelect: (TaskItem) -> Void
 
+    private var childTasks: [TaskItem] { store.tasks.filter { $0.parentTaskID == task.id } }
+
     var body: some View {
         HStack(spacing: 12) {
             Button { primaryAction() } label: {
                 Image(systemName: statusIcon)
                     .font(.title3).foregroundStyle(statusColor)
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 28, height: 30)
+                    .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }.buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
                 .disabled(!task.isCompleted && store.executionBlockReason(for: task) != nil)
                 .help(task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
+                .accessibilityLabel(task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
                     if task.parentTaskID != nil { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
                     if task.planLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
                     Text(task.title).strikethrough(task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
+                }
+                if !childTasks.isEmpty {
+                    Text("\(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 项子任务已完成")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if !compact {
                     HStack(spacing: 7) {
@@ -696,11 +815,18 @@ struct TaskCard: View {
             Spacer()
             Button { secondaryAction() } label: {
                 Image(systemName: task.needsAction ? "xmark.circle" : "arrow.uturn.backward.circle")
-                    .foregroundStyle(task.needsAction ? Color.secondary : .blue)
+                    .foregroundStyle(task.needsAction ? AppColors.textSecondary : preferences.accentColor)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
             .help(task.needsAction ? "取消任务（无需完成）" : "恢复为待完成")
+            .accessibilityLabel(task.needsAction ? "取消\(task.title)" : "恢复\(task.title)")
             Menu {
+                Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
+                    TaskBlueprintNavigation.open(task)
+                }
+                Divider()
                 if task.isUnscheduled {
                     Button("安排到今天", systemImage: "calendar.badge.plus") { store.scheduleToday(task) }
                 }
@@ -742,7 +868,13 @@ struct TaskCard: View {
                 }
                 Divider()
                 Button("删除", role: .destructive) { store.delete(task) }
-            } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("更多\(task.title)操作")
         }
         .padding(compact ? max(6, preferences.density.spacing - 2) : preferences.density.spacing + 1)
         .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius))
@@ -834,15 +966,16 @@ struct InboxView: View {
     var tasks: [TaskItem] { store.tasks.filter(\.isUnscheduled).sorted { $0.createdAt > $1.createdAt } }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: AppSpacing.section) {
                 PageHeader(eyebrow: "CAPTURE", title: "收集箱", description: "快速记下，稍后再判断优先级")
                 if tasks.isEmpty {
-                    ContentUnavailableView("收集箱已清空", systemImage: "tray", description: Text("新建事项时选择“暂不安排日期”，就可以先收集、稍后再规划。"))
+                    AppEmptyState(title: "收集箱已清空",
+                                  message: "新建事项时选择“暂不安排日期”，就可以先收集、稍后再规划。")
                         .frame(maxWidth: .infinity, minHeight: 240)
                 } else {
                     TaskList(tasks: tasks, onSelect: onSelect)
                 }
-            }.padding(30)
+            }.padding(AppSpacing.x8)
         }
     }
 }
@@ -862,7 +995,7 @@ struct PlanView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: AppSpacing.section) {
                 HStack(alignment: .bottom) {
                     PageHeader(eyebrow: "PLAN", title: "日历计划", description: "按周或月查看计划容量，给重要事项预留时间。")
                     Spacer()
@@ -871,15 +1004,15 @@ struct PlanView: View {
                         Text("未来 30 天").tag(30)
                     }.pickerStyle(.segmented).frame(width: 210)
                 }
-                HStack(spacing: 14) {
-                    StatCard(title: "计划事项", value: "\(scopedTasks.count)", icon: "calendar", color: .blue)
-                    StatCard(title: "预计投入", value: "\(scopedTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟", icon: "clock", color: .purple)
-                    StatCard(title: "已阻塞", value: "\(scopedTasks.filter { $0.effectiveStatus == .blocked }.count)", icon: "exclamationmark.octagon", color: .red)
+                HStack(spacing: AppSpacing.x3) {
+                    StatCard(title: "计划事项", value: "\(scopedTasks.count)", icon: "calendar", color: preferences.accentColor)
+                    StatCard(title: "预计投入", value: "\(scopedTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟", icon: "clock", color: AppColors.textSecondary)
+                    StatCard(title: "已阻塞", value: "\(scopedTasks.filter { $0.effectiveStatus == .blocked }.count)", icon: "exclamationmark.octagon", color: AppColors.warning)
                 }
                 if preferences.calendarIntegrationEnabled {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: AppSpacing.x3) {
                         HStack {
-                            Text("系统日历").font(.title2.weight(.bold))
+                            Text("系统日历").font(AppTypography.title)
                             Spacer()
                             Button("刷新", systemImage: "arrow.clockwise") {
                                 Task {
@@ -892,33 +1025,40 @@ struct PlanView: View {
                         }
                         if store.calendarEvents.isEmpty {
                             Text("授权后点击刷新，系统日程会显示在这里。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(AppTypography.callout).foregroundStyle(AppColors.textSecondary)
                         } else {
                             ForEach(store.calendarEvents.prefix(8)) { event in
-                                HStack {
-                                    Image(systemName: "calendar").foregroundStyle(.blue)
-                                    Text(event.title).lineLimit(1)
-                                    Spacer()
+                                HStack(alignment: .top, spacing: AppSpacing.x3) {
+                                    Image(systemName: "calendar").foregroundStyle(preferences.accentColor)
+                                    VStack(alignment: .leading, spacing: AppSpacing.x1) {
+                                        Text(event.title).font(AppTypography.body)
+                                        Text(event.calendarTitle)
+                                            .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
+                                    }
+                                    Spacer(minLength: AppSpacing.x2)
                                     Text(event.startDate, format: .dateTime.month().day().hour().minute())
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Text(event.calendarTitle).font(.caption2).foregroundStyle(.tertiary)
-                                }.padding(9).background(.background.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+                                        .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
+                                }
+                                .padding(AppSpacing.x3)
+                                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
+                                .overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
                             }
                         }
                     }
                 }
                 if scopedTasks.isEmpty {
-                    ContentUnavailableView("这个周期还没有计划", systemImage: "calendar", description: Text("通过添加事项或编辑任务日期安排计划。"))
+                    AppEmptyState(title: "这个周期还没有计划", message: "通过添加事项或编辑任务日期安排计划。",
+                                  systemImage: "calendar")
                         .frame(maxWidth: .infinity, minHeight: 300)
                 } else {
                     ForEach(Dictionary(grouping: scopedTasks, by: { Calendar.current.startOfDay(for: $0.scheduledFor) }).keys.sorted(), id: \.self) { date in
-                        VStack(alignment: .leading, spacing: 9) {
+                        VStack(alignment: .leading, spacing: AppSpacing.list) {
                             HStack {
-                                Text(date, format: .dateTime.month().day().weekday(.wide)).font(.headline)
+                                Text(date, format: .dateTime.month().day().weekday(.wide)).font(AppTypography.headline)
                                 Spacer()
                                 let dayTasks = scopedTasks.filter { Calendar.current.isDate($0.scheduledFor, inSameDayAs: date) }
                                 Text("\(dayTasks.count) 项 · \(dayTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
                             }
                             ForEach(scopedTasks.filter { Calendar.current.isDate($0.scheduledFor, inSameDayAs: date) }) { task in
                                 TaskCard(task: task, onSelect: onSelect)
@@ -926,7 +1066,7 @@ struct PlanView: View {
                         }
                     }
                 }
-            }.padding(30)
+            }.padding(AppSpacing.x8)
         }
     }
 }
@@ -934,18 +1074,28 @@ struct PlanView: View {
 struct CompletedView: View {
     @EnvironmentObject private var store: TaskStore
     let onSelect: (TaskItem) -> Void
+    private var processedTasks: [TaskItem] {
+        store.processedToday.sorted { ($0.statusChangedAt ?? $0.completedAt ?? .distantPast) > ($1.statusChangedAt ?? $1.completedAt ?? .distantPast) }
+    }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: AppSpacing.section) {
                 PageHeader(eyebrow: "HISTORY", title: "今日已处理", description: "完成、取消和延期都有记录，便于复盘计划变化。")
-                TaskList(tasks: store.processedToday.sorted { ($0.statusChangedAt ?? $0.completedAt ?? .distantPast) > ($1.statusChangedAt ?? $1.completedAt ?? .distantPast) }, onSelect: onSelect)
-            }.padding(30)
+                if processedTasks.isEmpty {
+                    AppEmptyState(title: "今天还没有已处理事项", message: "完成、取消或延期的事项会显示在这里。",
+                                  systemImage: "checkmark.circle")
+                        .frame(maxWidth: .infinity, minHeight: 240)
+                } else {
+                    TaskList(tasks: processedTasks, onSelect: onSelect)
+                }
+            }.padding(AppSpacing.x8)
         }
     }
 }
 
 struct ReportLanding: View {
     @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
     let onGenerate: () -> Void
     @State private var selectedReport: DailyReportItem?
     @State private var isWeeklyReviewPresented = false
@@ -957,7 +1107,8 @@ struct ReportLanding: View {
                     PageHeader(eyebrow: "REPORTS", title: "日报与复盘", description: "记录计划执行、会议结论和明日重点。")
                     Spacer()
                     Button("本周复盘", systemImage: "calendar.badge.checkmark") { isWeeklyReviewPresented = true }
-                    Button("生成今日日报", systemImage: "sparkles", action: onGenerate).buttonStyle(.borderedProminent)
+                    AppButton(title: "生成今日日报", systemImage: "sparkles", tint: preferences.accentColor,
+                              action: onGenerate)
                 }
                 if !store.weeklyReviews.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1059,6 +1210,7 @@ struct TaskEditor: View {
     @State private var dependencyIDs: Set<UUID>
     @State private var isPlanLocked: Bool
     @State private var appliedDefaults = false
+    @State private var openBlueprintOnDismiss = false
 
     init(task: TaskItem? = nil, blueprintID: UUID? = nil) {
         original = task
@@ -1082,7 +1234,17 @@ struct TaskEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack { Text(original == nil ? "新建事项" : "编辑事项").font(.title2.weight(.bold)); Spacer() }
+            HStack {
+                Text(original == nil ? "新建事项" : "编辑事项").font(.title2.weight(.bold))
+                Spacer()
+                if original != nil {
+                    Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
+                        openBlueprintOnDismiss = true
+                        dismiss()
+                    }
+                    .help("查看该事项的蓝图、列表和四象限")
+                }
+            }
                 .padding(22)
             Form {
                 TextField("事项名称", text: $title)
@@ -1164,6 +1326,9 @@ struct TaskEditor: View {
             }
         }
         .onChange(of: stageID) { _, _ in milestoneID = nil }
+        .onDisappear {
+            if openBlueprintOnDismiss, let original { TaskBlueprintNavigation.open(original) }
+        }
     }
 
     private func save() {
@@ -1451,7 +1616,12 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 300)
-        .sheet(item: $composerMode) { TaskComposerView(mode: $0) }
+        .clickAwayPopover(isPresented: Binding(
+            get: { composerMode != nil },
+            set: { if !$0 { composerMode = nil } }
+        )) { request, close in
+            if let mode = composerMode { TaskComposerView(mode: mode, cancelRequest: request, onClose: close) }
+        }
     }
 }
 

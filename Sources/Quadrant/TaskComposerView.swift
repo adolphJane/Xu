@@ -25,6 +25,11 @@ private enum TaskPlanChoice: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
+private struct SubtaskDraft: Identifiable {
+    let id = UUID()
+    var title: String
+}
+
 /// One creation surface for tasks, completed work, and editable AI drafts.
 struct TaskComposerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -33,12 +38,18 @@ struct TaskComposerView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @FocusState private var titleFocused: Bool
     @FocusState private var sentenceFocused: Bool
+    @FocusState private var subtaskFocused: Bool
 
     @State private var mode: TaskComposerMode
     @State private var title = ""
     @State private var sentence = ""
     @State private var hasAIDraft = false
-    @State private var subtasks: [String] = []
+    @State private var subtasks: [SubtaskDraft] = []
+    @State private var subtaskInput = ""
+    @State private var isAddingSubtask = false
+    @State private var showDiscardConfirmation = false
+    @State private var navigationTaskID: UUID?
+    @State private var navigationBlueprintID: UUID?
     @State private var blueprintID: UUID?
     @State private var stageID: UUID?
     @State private var milestoneID: UUID?
@@ -59,11 +70,18 @@ struct TaskComposerView: View {
     @State private var keepOpen = false
     @State private var feedback: String?
     @State private var appliedDefaults = false
+    private let opensBlueprintOnSave: Bool
+    private let cancelRequest: Int
+    private let onClose: (() -> Void)?
 
-    init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil, category: String? = nil) {
+    init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil, category: String? = nil,
+         opensBlueprintOnSave: Bool = true, cancelRequest: Int = 0, onClose: (() -> Void)? = nil) {
         _mode = State(initialValue: mode)
         _blueprintID = State(initialValue: blueprintID)
         _category = State(initialValue: category ?? "")
+        self.opensBlueprintOnSave = opensBlueprintOnSave
+        self.cancelRequest = cancelRequest
+        self.onClose = onClose
     }
 
     private var motion: Animation? {
@@ -73,11 +91,14 @@ struct TaskComposerView: View {
     private var isAIInput: Bool { mode == .ai && !hasAIDraft }
     private var composerHeight: CGFloat {
         if isAIInput { return 390 }
-        if showDetails || (mode == .ai && !subtasks.isEmpty) { return 690 }
-        return 555
+        if showDetails || !subtasks.isEmpty || isAddingSubtask { return 690 }
+        return 575
     }
     private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var cleanSentence: String { sentence.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var cleanSubtasks: [String] {
+        (subtasks.map(\.title) + [subtaskInput]).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
     private var activeBlueprints: [BlueprintItem] { store.blueprints.filter { $0.archivedAt == nil } }
 
     var body: some View {
@@ -100,6 +121,9 @@ struct TaskComposerView: View {
         .animation(motion, value: composerHeight)
         .background(preferences.pageBackground)
         .tint(preferences.accentColor)
+        .onChange(of: cancelRequest) { _, _ in
+            if !showDiscardConfirmation { cancel() }
+        }
         .onAppear {
             guard !appliedDefaults else { return }
             quadrant = preferences.defaultQuadrant
@@ -121,6 +145,29 @@ struct TaskComposerView: View {
             }
         }
         .onChange(of: stageID) { _, _ in milestoneID = nil }
+        .onExitCommand {
+            if isAddingSubtask && subtaskInput.isEmpty {
+                isAddingSubtask = false
+                titleFocused = true
+            } else {
+                cancel()
+            }
+        }
+        .onDisappear {
+            guard let navigationTaskID else { return }
+            NotificationCenter.default.post(
+                name: opensBlueprintOnSave ? .showTaskBlueprint : .focusBlueprintTask,
+                object: navigationTaskID,
+                userInfo: navigationBlueprintID.map { ["blueprintID": $0] }
+            )
+        }
+        .confirmationDialog("放弃未保存的任务？", isPresented: $showDiscardConfirmation) {
+            Button("放弃", role: .destructive) {
+                if keepOpen { navigationTaskID = nil }
+                close()
+            }
+            Button("继续编辑", role: .cancel) { }
+        } message: { Text("主任务和子任务的输入内容将丢失。") }
     }
 
     private var header: some View {
@@ -138,7 +185,7 @@ struct TaskComposerView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button { dismiss() } label: {
+            Button { cancel() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 27, height: 27)
@@ -242,26 +289,6 @@ struct TaskComposerView: View {
                     .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 14))
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(preferences.accentColor.opacity(0.25)))
             }
-            HStack(spacing: 13) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .foregroundStyle(preferences.accentColor)
-                    .frame(width: 17)
-                Text("关联蓝图")
-                    .font(.subheadline)
-                Spacer()
-                Picker("关联蓝图", selection: $blueprintID) {
-                    Text("不关联").tag(nil as UUID?)
-                    ForEach(activeBlueprints) { blueprint in
-                        Text(blueprint.name).tag(blueprint.id as UUID?)
-                    }
-                }
-                .labelsHidden()
-                .frame(maxWidth: 250)
-            }
-            .padding(.horizontal, 15)
-            .frame(height: 50)
-            .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 12))
-
             TaskCategoryField(category: $category)
                 .padding(.horizontal, 15)
                 .frame(height: 50)
@@ -295,6 +322,8 @@ struct TaskComposerView: View {
                 }
             }
 
+            subtaskFields
+
             DisclosureGroup(isExpanded: $showDetails) {
                 advancedFields
                     .padding(.top, 13)
@@ -305,29 +334,6 @@ struct TaskComposerView: View {
             .padding(15)
             .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 13))
 
-            if mode == .ai && hasAIDraft && !subtasks.isEmpty {
-                VStack(alignment: .leading, spacing: 9) {
-                    Text("AI 建议的子任务")
-                        .font(.subheadline.weight(.semibold))
-                    ForEach(subtasks, id: \.self) { subtask in
-                        HStack(spacing: 10) {
-                            Image(systemName: "arrow.turn.down.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(subtask).font(.subheadline)
-                            Spacer()
-                            Button { subtasks.removeAll { $0 == subtask } } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("移除子任务")
-                        }
-                    }
-                }
-                .padding(15)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 13))
-            }
             if let feedback {
                 Label(feedback, systemImage: "checkmark.circle.fill")
                     .font(.caption)
@@ -337,8 +343,73 @@ struct TaskComposerView: View {
         }
     }
 
+    private var subtaskFields: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.x2) {
+            HStack {
+                Label("子任务", systemImage: "arrow.turn.down.right")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("回车连续添加")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach($subtasks) { $draft in
+                HStack(spacing: AppSpacing.x2) {
+                    Image(systemName: "circle.dotted")
+                        .foregroundStyle(preferences.accentColor)
+                    TextField("子任务名称", text: $draft.title)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("编辑子任务")
+                    Button {
+                        subtasks.removeAll { $0.id == draft.id }
+                    } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("移除子任务")
+                }
+                .padding(.horizontal, AppSpacing.x3)
+                .frame(minHeight: 38)
+                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
+            }
+            if isAddingSubtask {
+                HStack(spacing: AppSpacing.x2) {
+                    Image(systemName: "plus.circle.fill").foregroundStyle(preferences.accentColor)
+                    TextField("输入子任务，按回车继续", text: $subtaskInput)
+                        .textFieldStyle(.plain)
+                        .focused($subtaskFocused)
+                        .onSubmit { appendSubtask() }
+                        .accessibilityLabel("新子任务")
+                }
+                .padding(.horizontal, AppSpacing.x3)
+                .frame(minHeight: 40)
+                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
+            } else {
+                Button("添加子任务", systemImage: "plus") {
+                    isAddingSubtask = true
+                    DispatchQueue.main.async { subtaskFocused = true }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(preferences.accentColor)
+                .frame(minHeight: 36)
+            }
+            if !cleanSubtasks.isEmpty {
+                Text("将创建 1 项主任务 + \(cleanSubtasks.count) 项子任务，保存后查看任务蓝图。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(AppSpacing.x4)
+        .background(preferences.accentColor.opacity(0.055), in: RoundedRectangle(cornerRadius: AppRadius.control))
+    }
+
     private var advancedFields: some View {
         VStack(alignment: .leading, spacing: 13) {
+            Picker("关联已有蓝图", selection: $blueprintID) {
+                Text("不关联").tag(nil as UUID?)
+                ForEach(activeBlueprints) { blueprint in
+                    Text(blueprint.name).tag(blueprint.id as UUID?)
+                }
+            }
             TextField("所属项目（日报按项目归类）", text: $project)
             if let blueprintID, !store.stages(for: blueprintID).isEmpty {
                 Picker("所属阶段", selection: $stageID) {
@@ -396,14 +467,17 @@ struct TaskComposerView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
+            if keepOpen, navigationTaskID != nil {
+                Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") { close() }
+                    .buttonStyle(.link)
+            }
             if !isAIInput {
                 Toggle("连续添加", isOn: $keepOpen)
                     .toggleStyle(.checkbox)
                     .font(.caption)
             }
             Spacer()
-            Button("取消") { dismiss() }
-                .keyboardShortcut(.cancelAction)
+            Button("取消") { cancel() }
             Button(primaryTitle, systemImage: primaryIcon) {
                 if isAIInput { Task { await parseAI() } }
                 else { save() }
@@ -421,7 +495,7 @@ struct TaskComposerView: View {
     private var primaryTitle: String {
         if isAIInput { return "生成草稿" }
         if mode == .completed { return "记录完成" }
-        return "添加待办"
+        return cleanSubtasks.isEmpty || keepOpen ? "添加任务" : "添加并查看蓝图"
     }
 
     private var primaryIcon: String {
@@ -459,7 +533,9 @@ struct TaskComposerView: View {
             planChoice = Calendar.current.isDateInToday(customDate) ? .today : Calendar.current.isDateInTomorrow(customDate) ? .tomorrow : .custom
             hasDeadline = parsed.task.dueDate != nil
             dueDate = parsed.task.dueDate ?? customDate
-            subtasks = parsed.subtasks
+            subtasks = parsed.subtasks.map { SubtaskDraft(title: $0) }
+            subtaskInput = ""
+            isAddingSubtask = !subtasks.isEmpty
             hasAIDraft = true
             showDetails = true
         }
@@ -501,38 +577,68 @@ struct TaskComposerView: View {
             dependencyIDs: isCompleted || dependencyIDs.isEmpty ? nil : Array(dependencyIDs),
             isPlanLocked: !isCompleted && planChoice != .inbox && isPlanLocked
         )
-        if mode == .ai && hasAIDraft {
-            for subtask in subtasks.reversed() where !subtask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                store.add(TaskItem(
-                    title: subtask.trimmingCharacters(in: .whitespacesAndNewlines),
+        let childTitles = cleanSubtasks
+        let children = childTitles.map { subtask in
+                TaskItem(
+                    title: subtask,
                     project: parent.project,
                     category: parent.category,
                     reportCategory: parent.reportCategory,
                     quadrant: parent.quadrant,
                     scheduledFor: parent.scheduledFor,
                     dueDate: parent.dueDate,
-                    estimatedMinutes: max(5, parent.estimatedMinutes / max(subtasks.count, 1)),
+                    estimatedMinutes: max(5, parent.estimatedMinutes / max(childTitles.count, 1)),
+                    isComplete: parent.isCompleted,
                     status: parent.status,
+                    completedAt: parent.completedAt,
                     blueprintID: parent.blueprintID,
                     stageID: parent.stageID,
+                    statusChangedAt: parent.statusChangedAt,
                     parentTaskID: parentID
-                ))
-            }
+                )
         }
-        store.add(parent)
+        guard store.addTaskTree(parent: parent, children: children) else { return }
+        if !children.isEmpty {
+            navigationTaskID = parentID
+            navigationBlueprintID = blueprintID
+        } else {
+            navigationTaskID = nil
+            navigationBlueprintID = nil
+        }
         if keepOpen {
             withAnimation(motion) {
                 title = ""
                 notes = ""
                 sentence = ""
                 subtasks = []
+                subtaskInput = ""
+                isAddingSubtask = false
                 hasAIDraft = false
                 completedAt = .now
-                feedback = "已添加，继续输入下一项"
+                feedback = "已创建 1 项主任务和 \(children.count) 项子任务，继续输入下一项"
             }
             focusInput()
         } else {
-            dismiss()
+            close()
         }
     }
+
+    private func appendSubtask() {
+        let value = subtaskInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        subtasks.append(SubtaskDraft(title: value))
+        subtaskInput = ""
+        subtaskFocused = true
+    }
+
+    private func cancel() {
+        if cleanTitle.isEmpty && cleanSubtasks.isEmpty && cleanSentence.isEmpty && notes.isEmpty {
+            if keepOpen { navigationTaskID = nil }
+            close()
+        } else {
+            showDiscardConfirmation = true
+        }
+    }
+
+    private func close() { if let onClose { onClose() } else { dismiss() } }
 }

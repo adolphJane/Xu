@@ -380,4 +380,5 @@ enum TodayBlueprintOrganizer {
 
 extension Notification.Name {
     static let showCommandPalette = Notification.Name("sequence.showCommandPalette")
+    static let showTaskComposer = Notification.Name("sequence.showTaskComposer")
 }

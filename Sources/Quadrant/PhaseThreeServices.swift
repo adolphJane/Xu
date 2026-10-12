@@ -1,7 +1,11 @@
-import AppKit
 import CryptoKit
 @preconcurrency import EventKit
 import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 enum SnapshotCodec {
     static func encode(_ snapshot: WorkspaceSnapshot, pretty: Bool = false) throws -> Data {
@@ -151,7 +155,13 @@ extension TaskStore {
     private func writeSyncEnvelope(snapshot: WorkspaceSnapshot, revision: Int, to url: URL) throws {
         let envelope = SyncEnvelope(
             revision: revision,
-            deviceID: Host.current().localizedName ?? "Mac",
+            deviceID: {
+                #if os(macOS)
+                Host.current().localizedName ?? "Mac"
+                #else
+                UIDevice.current.name
+                #endif
+            }(),
             snapshot: snapshot,
             checksum: try SnapshotCodec.checksum(snapshot)
         )

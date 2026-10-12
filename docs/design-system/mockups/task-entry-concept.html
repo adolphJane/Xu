@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-view="desktop">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>序 · 聚焦式任务添加设计稿</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas:#f3ede4; --sidebar:#eee6db; --surface:#fffcf7; --surface-raised:#fffefa; --soft:#f7f0e8;
+      --ink:#2c2622; --muted:#80766e; --subtle:#a69a8e; --line:#e9ded2;
+      --brand:#996037; --brand-deep:#7d4d2d; --brand-soft:#f2e6d8; --green:#61816b;
+      --scrim:#2d261e3d; --shadow:0 32px 100px #34271b3d,0 8px 28px #34271b1c;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas:#231f1c; --sidebar:#292420; --surface:#302a26; --surface-raised:#38312c; --soft:#3c332d;
+      --ink:#f5eee6; --muted:#b8aa9e; --subtle:#95877b; --line:#51463d;
+      --brand:#dcaa83; --brand-deep:#edbc98; --brand-soft:#4b3930; --green:#9ebba5;
+      --scrim:#0806058c; --shadow:0 32px 100px #0009,0 8px 28px #0006;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-width:320px;background:#e7ded3;color:var(--ink);font:14px/1.48 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif;-webkit-font-smoothing:antialiased}
+    html[data-theme="dark"] body{background:#171412}
+    button,input{font:inherit} button{cursor:pointer} button:focus-visible,input:focus-visible{outline:3px solid var(--brand);outline-offset:3px}
+    .ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+    .ico.small{width:15px;height:15px}.ico.large{width:23px;height:23px}
+    .previewbar{display:flex;align-items:center;gap:22px;max-width:1300px;margin:0 auto;padding:18px 24px 8px;color:#5a5048}
+    html[data-theme="dark"] .previewbar{color:#d5c7ba}
+    .previewbrand{display:flex;align-items:center;gap:10px;margin-right:auto;white-space:nowrap}
+    .previewbrand .mark{display:grid;place-items:center;width:27px;height:27px;border-radius:8px;background:#946039;color:#fff;font:600 18px Georgia,serif}
+    .previewbrand strong{font-size:13px;letter-spacing:.02em}.previewbrand small{font-size:11px;opacity:.68}
+    .previewtools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .segmented{display:flex;gap:3px;padding:3px;border:1px solid #cdbba93d;border-radius:10px;background:#fff7}
+    html[data-theme="dark"] .segmented{background:#fff1}
+    .segmented button{border:0;border-radius:7px;padding:6px 11px;background:transparent;color:inherit;font-size:12px}
+    .segmented button.active{background:#fffdfa;color:#60432e;box-shadow:0 1px 5px #35291b16;font-weight:700}
+    html[data-theme="dark"] .segmented button.active{background:#554236;color:#f8e5d5}
+    .context-select{height:34px;padding:0 10px;border:1px solid #cdbba969;border-radius:9px;background:#fff9;color:inherit;font-size:12px}
+    html[data-theme="dark"] .context-select{background:#fff1}
+    .hint{max-width:1300px;margin:0 auto;padding:0 24px 12px;color:#8a7d70;font-size:11px}
+    .stage{padding:0 24px 28px}.mac{position:relative;display:flex;width:min(1260px,100%);height:770px;margin:auto;overflow:hidden;border:1px solid var(--line);border-radius:19px;background:var(--canvas);box-shadow:0 24px 80px #3327192b}
+    .mac-sidebar{width:208px;flex:none;padding:0 13px 22px;background:var(--sidebar);border-right:1px solid var(--line);display:flex;flex-direction:column}
+    .traffic{display:flex;align-items:center;gap:7px;height:54px;padding-left:7px}.traffic i{width:11px;height:11px;border-radius:50%;background:#ec6a5f}.traffic i:nth-child(2){background:#f3bb4c}.traffic i:nth-child(3){background:#5dc45b}
+    .app-brand{display:flex;align-items:center;gap:10px;padding:16px 9px 29px}.app-brand b{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;background:#996037;color:#fff;font:600 21px Georgia,serif}.app-brand strong{font-size:15px}.app-brand small{display:block;color:var(--muted);font-size:10px}
+    .nav-caption{padding:0 12px;margin-bottom:8px;color:var(--subtle);font-size:10px;font-weight:700;letter-spacing:.1em}
+    .nav{display:flex;align-items:center;gap:12px;height:43px;padding:0 12px;color:var(--muted);border-radius:10px;font-weight:570;font-size:12px}.nav.current{background:var(--brand-soft);color:var(--brand);font-weight:700}.nav .ico{width:17px;height:17px}.nav-record{margin-top:25px}
+    .sidebar-bottom{margin-top:auto}.sidebar-bottom .quick-key{display:flex;align-items:center;justify-content:space-between;padding:10px 11px;border-radius:10px;background:var(--surface);color:var(--muted);font-size:11px}.sidebar-bottom kbd{color:var(--subtle);font-size:10px}
+    .mac-main{flex:1;min-width:0}.mac-topbar{display:flex;align-items:center;justify-content:space-between;height:61px;padding:0 30px;background:var(--surface);border-bottom:1px solid var(--line)}.crumb{display:flex;align-items:center;gap:10px;color:var(--subtle);font-size:12px}.crumb b{color:var(--ink)}.top-actions{display:flex;align-items:center;gap:12px;color:var(--muted)}
+    .mac-page{max-width:960px;margin:0 auto;padding:48px 42px}.eyebrow{color:var(--brand);font-size:10px;font-weight:800;letter-spacing:.21em}.mac-page h1{font-size:30px;line-height:1.2;margin:10px 0 3px;letter-spacing:-.03em}.mac-page p{margin:0;color:var(--muted);font-size:13px}.page-grid{display:grid;grid-template-columns:225px minmax(0,1fr);gap:19px;margin-top:31px}.under-card{min-height:340px;padding:22px;background:var(--surface);border:1px solid var(--line);border-radius:17px}.under-card h2{font-size:16px;margin:0 0 19px}.under-row{padding:12px 8px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px}.under-row.selected{color:var(--brand);background:var(--brand-soft);border:0;border-radius:9px;font-weight:700}.under-task{display:flex;align-items:center;gap:12px;padding:18px 0;border-bottom:1px solid var(--line);font-size:12px}.under-task span{width:16px;height:16px;border:1.5px solid var(--subtle);border-radius:5px}.under-task small{margin-left:auto;color:var(--muted)}
+    .mac-dimmer{position:absolute;inset:0;background:var(--scrim);backdrop-filter:blur(2.5px)}
+    .composer{position:absolute;left:calc(50% + 76px);top:50%;transform:translate(-50%,-50%);width:min(528px,calc(100% - 270px));overflow:hidden;background:var(--surface-raised);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow)}
+    .composer-header{display:flex;align-items:flex-start;gap:12px;padding:27px 29px 0}.composer-glyph{display:grid;place-items:center;width:39px;height:39px;flex:none;border-radius:12px;background:var(--brand-soft);color:var(--brand)}.composer-header h2{margin:0;font-size:19px;line-height:1.3;letter-spacing:-.02em}.composer-header p{margin:3px 0 0;color:var(--muted);font-size:12px}.close{margin-left:auto;display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:50%;background:var(--soft);color:var(--muted)}
+    .source-line{display:flex;align-items:center;gap:6px;margin:24px 29px 10px;color:var(--muted);font-size:11px;font-weight:600}.source-line .ico{color:var(--brand)}
+    .title-box{margin:0 29px;padding:14px 17px 13px;border:1.5px solid var(--brand);border-radius:13px;background:var(--surface);box-shadow:0 0 0 4px var(--brand-soft)}.title-box label{display:block;margin-bottom:5px;color:var(--brand);font-size:11px;font-weight:750}.title-box input{display:block;width:100%;height:34px;padding:0;border:0;outline:none;background:transparent;color:var(--ink);font-size:17px;font-weight:560}.title-box input::placeholder{color:var(--subtle)}.title-box small{display:block;margin-top:6px;color:var(--subtle);font-size:10px}
+    .assignment{padding:23px 29px 0}.assignment-label{margin-bottom:10px;color:var(--muted);font-size:11px;font-weight:650}.assignment-row{display:flex;gap:8px;flex-wrap:wrap}.choice{display:flex;align-items:center;gap:7px;min-height:37px;padding:0 11px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--ink);font-size:12px;font-weight:630}.choice .ico{color:var(--brand)}.choice span{color:var(--muted);font-weight:500}.choice strong{font-weight:700}.choice .down{width:12px;height:12px;margin-left:3px;color:var(--subtle)}
+    .detail-toggle{display:flex;align-items:center;gap:7px;width:calc(100% - 58px);min-height:43px;margin:15px 29px 0;padding:0;border:0;border-top:1px solid var(--line);background:none;color:var(--muted);font-size:12px;text-align:left}.detail-toggle .ico{width:14px;height:14px}.detail-toggle .chevron{margin-left:auto;transition:transform .2s}.detail-toggle[aria-expanded="true"] .chevron{transform:rotate(180deg)}
+    .details-panel{display:none;padding:0 29px 14px}.details-panel.open{display:grid;grid-template-columns:1fr 1fr;gap:8px}.detail-item{display:flex;align-items:center;justify-content:space-between;min-height:37px;padding:0 11px;border:1px solid var(--line);border-radius:9px;color:var(--muted);background:var(--surface);font-size:11px}.detail-item strong{color:var(--ink);font-weight:600}
+    .composer-footer{display:flex;align-items:center;gap:12px;padding:16px 29px 20px;background:var(--soft);border-top:1px solid var(--line)}.keep{display:flex;align-items:center;gap:8px;margin-right:auto;color:var(--muted);font-size:11px}.keep input{accent-color:var(--brand);width:15px;height:15px}.shortcut{color:var(--subtle);font-size:10px}.primary{display:flex;align-items:center;justify-content:center;gap:8px;min-height:39px;padding:0 17px;border:0;border-radius:10px;background:var(--brand);color:#fff;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 5px 14px #75462824}.primary:hover{background:var(--brand-deep)}.primary:disabled{opacity:.45;cursor:not-allowed}html[data-theme="dark"] .primary{color:#231a15}
+    .phone-scene{display:none;justify-content:center;align-items:center;min-height:805px}.phone{position:relative;width:390px;height:844px;overflow:hidden;border:8px solid #28231f;border-radius:47px;background:var(--canvas);box-shadow:0 25px 80px #271e1766}.phone:before{content:"";position:absolute;z-index:8;top:8px;left:50%;transform:translateX(-50%);width:109px;height:26px;border-radius:18px;background:#24211f}.phone-status{height:53px;padding:16px 25px;color:var(--ink);font-size:12px;font-weight:750}.phone-status span{float:right;font-size:11px}.phone-page{padding:21px}.phone-page h2{font-size:29px;letter-spacing:-.03em;margin:2px 0 5px}.phone-page p{margin:0 0 23px;color:var(--muted);font-size:12px}.phone-under-card{margin:9px 0 12px;padding:17px;background:var(--surface);border:1px solid var(--line);border-radius:16px}.phone-under-card strong{font-size:15px}.phone-under-card small{display:block;margin-top:6px;color:var(--muted)}.phone-under-card .under-task{font-size:11px}.phone-dimmer{position:absolute;inset:0;background:var(--scrim)}
+    .phone-sheet{position:absolute;left:0;right:0;bottom:0;height:675px;display:flex;flex-direction:column;overflow:hidden;border-radius:27px 27px 0 0;background:var(--surface-raised);box-shadow:0 -14px 52px #271d1a32}.grabber{width:34px;height:5px;margin:9px auto 0;border-radius:10px;background:var(--line)}.phone-sheet-header{display:flex;align-items:center;justify-content:space-between;height:57px;padding:0 20px;border-bottom:1px solid var(--line)}.phone-sheet-header button{border:0;background:none;color:var(--brand);font-size:14px}.phone-sheet-header strong{font-size:15px}.phone-body{padding:23px 21px 0}.phone-source{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;margin-bottom:15px}.phone-source .ico{color:var(--brand)}.phone-title{display:block;margin:0 0 8px;font-size:13px;font-weight:700}.phone-field{width:100%;height:57px;padding:0 14px;border:1.5px solid var(--brand);border-radius:12px;background:var(--surface);color:var(--ink);font-size:16px;box-shadow:0 0 0 3px var(--brand-soft)}.phone-field::placeholder{color:var(--subtle)}.phone-help{margin:9px 0 22px;color:var(--subtle);font-size:11px}.phone-body .assignment{padding:0}.phone-body .assignment-label{font-size:12px}.phone-body .choice{min-height:44px;font-size:12px}.phone-body .detail-toggle{width:100%;margin:18px 0 0;min-height:48px}.phone-body .details-panel{padding:0 0 12px}.phone-body .detail-item{min-height:42px}
+    .phone-bottom{margin-top:auto;padding:14px 20px 22px;background:var(--surface-raised);border-top:1px solid var(--line)}.phone-bottom .primary{width:100%;min-height:48px;border-radius:12px;font-size:15px}.phone-bottom small{display:block;margin-top:8px;text-align:center;color:var(--subtle);font-size:10px}.home-indicator{position:absolute;bottom:7px;left:50%;transform:translateX(-50%);width:110px;height:4px;border-radius:4px;background:#8e8278}
+    .toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,10px);z-index:20;padding:11px 18px;border-radius:11px;background:#2f2823;color:#fff;box-shadow:0 8px 30px #0004;font-size:12px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s}.toast.visible{opacity:1;transform:translate(-50%,0)}
+    html[data-view="mobile"] .mac{display:none}html[data-view="mobile"] .phone-scene{display:flex}
+    @media(max-width:650px){.previewbar{align-items:flex-start;flex-direction:column;gap:9px}.previewbrand{margin:0}.stage{padding:0 10px 24px}.mac{height:740px}.mac-sidebar{width:86px}.app-brand span,.nav span,.nav-caption,.sidebar-bottom{display:none}.mac-page{padding:38px 24px}.page-grid{grid-template-columns:1fr}.page-grid .under-card:first-child{display:none}.composer{left:50%;width:calc(100% - 40px)}.composer-header,.assignment{padding-left:18px;padding-right:18px}.source-line{margin-left:18px;margin-right:18px}.title-box{margin-left:18px;margin-right:18px}.detail-toggle{width:calc(100% - 36px);margin-left:18px;margin-right:18px}.details-panel{padding-left:18px;padding-right:18px}.composer-footer{padding-left:18px;padding-right:18px}.shortcut{display:none}}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute"><defs>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 5h16l2 12v3H2v-3L4 5Z"/><path d="M2.5 16h5l2 3h5l2-3h5"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 11V4h7l10 10-7 7L3 11Z"/><circle cx="7.5" cy="7.5" r="1"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M15 3v5h5M8 12h8M8 16h7"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-stack" viewBox="0 0 24 24"><rect x="5" y="7" width="14" height="14" rx="2"/><path d="M7 4h10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"/></symbol>
+    <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 2 1.8 7.2L21 11l-7.2 1.8L12 20l-1.8-7.2L3 11l7.2-1.8L12 2Z"/></symbol>
+  </defs></svg>
+  <header class="previewbar">
+    <div class="previewbrand"><span class="mark">序</span><strong>聚焦式任务添加</strong><small> · UI 设计稿</small></div>
+    <div class="previewtools">
+      <div class="segmented" role="group" aria-label="预览设备"><button data-view-button="desktop" class="active">macOS</button><button data-view-button="mobile">iPhone</button></div>
+      <div class="segmented" role="group" aria-label="外观"><button data-theme-button="light" class="active">浅色</button><button data-theme-button="dark">深色</button></div>
+      <label><select id="context" class="context-select" aria-label="添加入口"><option value="global">全局快捷添加</option><option value="category">从「工作」分类</option><option value="today">从「今日」</option></select></label>
+    </div>
+  </header>
+  <p class="hint">演示稿：点击归属或安排可切换示意状态；“更多设置”可展开。不会写入真实任务。</p>
+  <main class="stage">
+    <section class="mac" aria-label="macOS 任务添加设计稿">
+      <aside class="mac-sidebar"><div class="traffic"><i></i><i></i><i></i></div><div class="app-brand"><b>序</b><span><strong>序</strong><small>把计划变成行动</small></span></div><div class="nav-caption">工作区</div><div class="nav"><svg class="ico"><use href="#i-sun"/></svg><span>今日</span></div><div class="nav"><svg class="ico"><use href="#i-stack"/></svg><span>蓝图</span></div><div class="nav"><svg class="ico"><use href="#i-circle"/></svg><span>四象限</span></div><div class="nav current"><svg class="ico"><use href="#i-tag"/></svg><span>分类</span></div><div class="nav"><svg class="ico"><use href="#i-calendar"/></svg><span>日历计划</span></div><div class="nav-caption nav-record">记录</div><div class="nav"><svg class="ico"><use href="#i-inbox"/></svg><span>收集箱</span></div><div class="sidebar-bottom"><div class="quick-key">快速操作 <kbd>⌘⇧␣</kbd></div></div></aside>
+      <div class="mac-main"><div class="mac-topbar"><div class="crumb">工作区 <span>›</span> <b>分类</b></div><div class="top-actions"><svg class="ico"><use href="#i-spark"/></svg><span>纸张</span></div></div><div class="mac-page"><div class="eyebrow">ORGANIZE YOUR WORK</div><h1>任务分类</h1><p>把相近的事放在一起，让每一步都更清晰。</p><div class="page-grid"><div class="under-card"><h2>类别概览</h2><div class="under-row">所有类别</div><div class="under-row">未分类</div><div class="under-row selected">工作</div><div class="under-row">生活</div><div class="under-row">学习</div></div><div class="under-card"><h2>工作 <small style="font-size:11px;color:var(--muted);font-weight:400"> · 8 项任务</small></h2><div class="under-task"><span></span> 整理产品发布清单 <small>今天 14:00</small></div><div class="under-task"><span></span> 同步新版首页的交互方案 <small>明天 10:30</small></div><div class="under-task"><span></span> 确认项目里程碑 <small>周五</small></div></div></div></div></div>
+      <div class="mac-dimmer"></div>
+      <div class="composer" role="dialog" aria-label="添加任务预览">
+        <div class="composer-header"><span class="composer-glyph"><svg class="ico large"><use href="#i-plus"/></svg></span><div><h2>记录一件要做的事</h2><p>先写下来，细节可以稍后再补。</p></div><button class="close" type="button" aria-label="关闭演示窗口"><svg class="ico small"><use href="#i-close"/></svg></button></div>
+        <div class="source-line"><svg class="ico small"><use href="#i-spark"/></svg><span data-source>从全局快捷添加进入</span></div>
+        <div class="title-box"><label for="desktop-title">要做什么？</label><input id="desktop-title" data-title value="和设计团队确认首页交互方案" placeholder="例如：和设计团队确认首页交互方案"><small>只填这一项即可添加</small></div>
+        <div class="assignment"><div class="assignment-label">保存到</div><div class="assignment-row"><button type="button" class="choice" data-cycle="category" aria-label="切换任务分类"><svg class="ico small"><use href="#i-tag"/></svg><span>分类</span><strong data-category>未分类</strong><svg class="ico down"><use href="#i-chevron"/></svg></button><button type="button" class="choice" data-cycle="plan" aria-label="切换任务安排"><svg class="ico small"><use href="#i-inbox"/></svg><span>安排</span><strong data-plan>收集箱</strong><svg class="ico down"><use href="#i-chevron"/></svg></button></div></div>
+        <button type="button" class="detail-toggle" data-details aria-expanded="false"><svg class="ico"><use href="#i-plus"/></svg>更多设置 <svg class="ico chevron"><use href="#i-chevron"/></svg></button>
+        <div class="details-panel" data-panel><div class="detail-item">备注 <strong>添加说明</strong></div><div class="detail-item">关联蓝图 <strong>不关联</strong></div><div class="detail-item">预计时长 <strong>30 分钟</strong></div><div class="detail-item">截止日期 <strong>不设置</strong></div></div>
+        <div class="composer-footer"><label class="keep"><input type="checkbox"> 连续添加</label><span class="shortcut">⌘ ↵</span><button type="button" class="primary" data-save><svg class="ico small"><use href="#i-plus"/></svg>添加任务</button></div>
+      </div>
+    </section>
+    <section class="phone-scene" aria-label="iPhone 任务添加设计稿"><div class="phone"><div class="phone-status">9:41 <span>●●● ▰</span></div><div class="phone-page"><h2>分类</h2><p>把相近的事放在一起。</p><div class="phone-under-card"><strong>所有类别</strong><small>8 项任务 · 5 项待处理</small></div><div class="phone-under-card"><strong>待处理</strong><div class="under-task"><span></span> 整理产品发布清单</div><div class="under-task"><span></span> 同步新版首页的交互方案</div></div></div><div class="phone-dimmer"></div><div class="phone-sheet"><div class="grabber"></div><div class="phone-sheet-header"><button type="button" data-cancel>取消</button><strong>新建任务</strong><span style="width:28px"></span></div><div class="phone-body"><div class="phone-source"><svg class="ico small"><use href="#i-spark"/></svg><span data-source>从全局快捷添加进入</span></div><label class="phone-title" for="phone-title">要做什么？</label><input class="phone-field" id="phone-title" data-title value="和设计团队确认首页交互方案" placeholder="写下要做的事"><div class="phone-help">只填标题即可添加，稍后仍可调整。</div><div class="assignment"><div class="assignment-label">保存到</div><div class="assignment-row"><button type="button" class="choice" data-cycle="category" aria-label="切换任务分类"><svg class="ico small"><use href="#i-tag"/></svg><span>分类</span><strong data-category>未分类</strong><svg class="ico down"><use href="#i-chevron"/></svg></button><button type="button" class="choice" data-cycle="plan" aria-label="切换任务安排"><svg class="ico small"><use href="#i-inbox"/></svg><span>安排</span><strong data-plan>收集箱</strong><svg class="ico down"><use href="#i-chevron"/></svg></button></div></div><button type="button" class="detail-toggle" data-details aria-expanded="false"><svg class="ico"><use href="#i-plus"/></svg>更多设置 <svg class="ico chevron"><use href="#i-chevron"/></svg></button><div class="details-panel" data-panel><div class="detail-item">备注 <strong>添加说明</strong></div><div class="detail-item">关联蓝图 <strong>不关联</strong></div><div class="detail-item">预计时长 <strong>30 分钟</strong></div><div class="detail-item">截止日期 <strong>不设置</strong></div></div></div><div class="phone-bottom"><button type="button" class="primary" data-save><svg class="ico"><use href="#i-plus"/></svg>添加任务</button><small>保存后可在任务详情中继续完善</small></div></div><div class="home-indicator"></div></div></section>
+  </main>
+  <div class="toast" role="status" aria-live="polite"></div>
+  <script>
+    const root=document.documentElement;
+    const presets={global:{source:"从全局快捷添加进入",category:"未分类",plan:"收集箱"},category:{source:"从「工作」分类进入",category:"工作",plan:"收集箱"},today:{source:"从「今日」进入",category:"未分类",plan:"今天"}};
+    let current={...presets.global};
+    function paint(){document.querySelectorAll('[data-source]').forEach(e=>e.textContent=current.source);document.querySelectorAll('[data-category]').forEach(e=>e.textContent=current.category);document.querySelectorAll('[data-plan]').forEach(e=>e.textContent=current.plan)}
+    function select(buttonSelector,key,value){root.dataset[key]=value;document.querySelectorAll(buttonSelector).forEach(b=>b.classList.toggle('active',b.dataset[key+'Button']===value));const url=new URL(location.href);url.searchParams.set(key,value);history.replaceState(null,'',url)}
+    document.querySelectorAll('[data-view-button]').forEach(b=>b.addEventListener('click',()=>select('[data-view-button]','view',b.dataset.viewButton)));
+    document.querySelectorAll('[data-theme-button]').forEach(b=>b.addEventListener('click',()=>select('[data-theme-button]','theme',b.dataset.themeButton)));
+    document.getElementById('context').addEventListener('change',e=>{current={...presets[e.target.value]};paint()});
+    document.querySelectorAll('[data-cycle]').forEach(b=>b.addEventListener('click',()=>{const key=b.dataset.cycle,values=key==='category'?['未分类','工作','生活','学习']:['收集箱','今天','明天'];current[key]=values[(values.indexOf(current[key])+1)%values.length];paint()}));
+    document.querySelectorAll('[data-details]').forEach(b=>b.addEventListener('click',()=>{const open=b.getAttribute('aria-expanded')!=='true';b.setAttribute('aria-expanded',String(open));b.nextElementSibling.classList.toggle('open',open)}));
+    let toastTimer;function showToast(message){const toast=document.querySelector('.toast');toast.textContent=message;toast.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('visible'),2600)}
+    function save(){const input=document.querySelector(root.dataset.view==='mobile'?'#phone-title':'#desktop-title');if(!input.value.trim()){input.focus();showToast('先写下任务标题');return}showToast(`演示：已添加至${current.category} · ${current.plan}`);if(root.dataset.view==='desktop'&&document.querySelector('.keep input').checked){document.querySelectorAll('[data-title]').forEach(e=>e.value='');input.focus()}}
+    document.querySelectorAll('[data-save]').forEach(b=>b.addEventListener('click',save));document.querySelectorAll('[data-cancel],.close').forEach(b=>b.addEventListener('click',()=>showToast('演示稿不会关闭真实页面')));
+    document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();save()}if(e.key==='Escape')showToast('演示稿：取消添加')});
+    const params=new URLSearchParams(location.search);const view=params.get('view'),theme=params.get('theme');if(view==='mobile'||view==='desktop')select('[data-view-button]','view',view);if(theme==='dark'||theme==='light')select('[data-theme-button]','theme',theme);paint();
+  </script>
+</body>
+</html>

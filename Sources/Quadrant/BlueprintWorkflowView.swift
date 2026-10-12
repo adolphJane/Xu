@@ -28,6 +28,7 @@ struct BlueprintWorkflowView: View {
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     let blueprint: BlueprintItem
+    let focusTaskID: UUID?
 
     @State private var selectedID: UUID?
     @State private var quickMode: WorkflowAddMode = .root
@@ -64,6 +65,13 @@ struct BlueprintWorkflowView: View {
         let ids = Set(scopedTasks.map(\.id))
         return scopedTasks.flatMap { task in
             task.effectiveDependencyIDs.filter { ids.contains($0) }.map { WorkflowEdge(from: $0, to: task.id) }
+        }
+    }
+    private var hierarchyEdges: [WorkflowEdge] {
+        let ids = Set(scopedTasks.map(\.id))
+        return scopedTasks.compactMap { task in
+            guard let parentID = task.parentTaskID, ids.contains(parentID) else { return nil }
+            return WorkflowEdge(from: parentID, to: task.id)
         }
     }
     var body: some View {
@@ -108,7 +116,7 @@ struct BlueprintWorkflowView: View {
                 }
             }
         }
-        .sheet(isPresented: $isExistingPickerShowing) {
+        .popover(isPresented: $isExistingPickerShowing, arrowEdge: .bottom) {
             WorkflowExistingTaskPicker(blueprint: blueprint) { task in
                 withHistory { store.assign(task, to: blueprint, showMessage: false) }
                 if store.tasks.first(where: { $0.id == task.id })?.blueprintID == blueprint.id {
@@ -120,6 +128,14 @@ struct BlueprintWorkflowView: View {
         .sheet(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprint.id, stage: $0) }
         .sheet(item: $editingTask) { TaskEditor(task: $0) }
         .onChange(of: isQuickAdding) { _, value in if value { quickFocused = true } }
+        .onAppear { if let focusTaskID { selectedID = focusTaskID } }
+        .onChange(of: focusTaskID) { _, newValue in if let newValue { selectedID = newValue } }
+        .onReceive(NotificationCenter.default.publisher(for: .focusBlueprintTask)) { notification in
+            guard let taskID = notification.object as? UUID,
+                  notification.userInfo?["blueprintID"] as? UUID == blueprint.id else { return }
+            selectedID = taskID
+            isListShowing = false
+        }
     }
 
     private var toolbar: some View {
@@ -251,6 +267,7 @@ struct BlueprintWorkflowView: View {
         let nodes = scopedTasks
         let layout = positions
         let links = edges
+        let hierarchyLinks = hierarchyEdges
         let width = max(1050, (layout.values.map(\.x).max() ?? 0) + 400)
         let height = max(650, (layout.values.map(\.y).max() ?? 0) + 350)
         return ScrollView([.horizontal, .vertical]) {
@@ -266,6 +283,16 @@ struct BlueprintWorkflowView: View {
                         lines.addLine(to: CGPoint(x: size.width, y: y))
                     }
                     context.stroke(lines, with: .color(.secondary.opacity(0.09)), lineWidth: 1)
+                    for edge in hierarchyLinks {
+                        guard let from = nodes.first(where: { $0.id == edge.from }),
+                              let to = nodes.first(where: { $0.id == edge.to }),
+                              let start = layout[edge.from], let end = layout[edge.to] else { continue }
+                        context.stroke(
+                            edgePath(from: start, fromHeight: cardHeight(from), to: end, toHeight: cardHeight(to)),
+                            with: .color(preferences.accentColor.opacity(0.35)),
+                            style: StrokeStyle(lineWidth: 2, dash: [5, 5])
+                        )
+                    }
                     for edge in links {
                         guard let from = nodes.first(where: { $0.id == edge.from }),
                               let to = nodes.first(where: { $0.id == edge.to }),

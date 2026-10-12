@@ -6,6 +6,7 @@ struct BlueprintsView: View {
     @EnvironmentObject private var store: TaskStore
     @State private var isAdding = false
     @State private var selectedBlueprint: BlueprintItem?
+    @State private var selectedTaskRoot: TaskItem?
     @State private var isChoosingTemplate = false
     @State private var showArchived = false
     @State private var importMessage: String?
@@ -20,22 +21,29 @@ struct BlueprintsView: View {
                 PageHeader(
                     eyebrow: "BLUEPRINTS",
                     title: "蓝图",
-                    description: "从目标出发，按阶段和里程碑持续执行。",
+                    description: "从任务出发，按步骤持续推进。",
                     action: { isAdding = true },
                     actionTitle: "新建蓝图"
                 )
                 HStack {
                     Button("AI 生成蓝图", systemImage: "sparkles") { isAICreating = true }.buttonStyle(.borderedProminent)
                     Button("从模板创建", systemImage: "square.stack.3d.up.fill") { isChoosingTemplate = true }
+                        .popover(isPresented: $isChoosingTemplate, arrowEdge: .bottom) {
+                            BlueprintTemplatePicker()
+                        }
                     Button("导入蓝图", systemImage: "square.and.arrow.down") { importBlueprint() }
                     Button("AI 变更记录", systemImage: "clock.arrow.circlepath") { isShowingHistory = true }
+                        .popover(isPresented: $isShowingHistory, arrowEdge: .bottom) {
+                            PlanChangeHistoryView()
+                        }
                     Spacer()
                     Toggle("显示已归档", isOn: $showArchived).toggleStyle(.switch)
                 }
                 .controlSize(.large)
 
                 let visibleBlueprints = store.blueprints.filter { showArchived || $0.archivedAt == nil }
-                if visibleBlueprints.isEmpty {
+                let taskRoots = TaskTreeProjection.roots(in: store.tasks)
+                if visibleBlueprints.isEmpty && taskRoots.isEmpty {
                     ContentUnavailableView(
                         "还没有蓝图",
                         systemImage: "point.3.connected.trianglepath.dotted",
@@ -44,6 +52,13 @@ struct BlueprintsView: View {
                     .frame(maxWidth: .infinity, minHeight: 360)
                 } else {
                     LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(taskRoots) { root in
+                            Button { selectedTaskRoot = root } label: {
+                                TaskBlueprintCard(root: root)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("打开\(root.title)任务蓝图")
+                        }
                         ForEach(visibleBlueprints) { blueprint in
                             BlueprintCard(blueprint: blueprint)
                                 .onTapGesture { selectedBlueprint = blueprint }
@@ -56,11 +71,12 @@ struct BlueprintsView: View {
             .padding(.horizontal, 34)
             .padding(.vertical, 30)
         }
-        .sheet(isPresented: $isAdding) { BlueprintEditor() }
-        .sheet(isPresented: $isChoosingTemplate) { BlueprintTemplatePicker() }
+        .clickAwayPopover(isPresented: $isAdding) { request, close in
+            BlueprintEditor(cancelRequest: request, onClose: close)
+        }
         .sheet(isPresented: $isAICreating) { AIBlueprintCreatorView() }
-        .sheet(isPresented: $isShowingHistory) { PlanChangeHistoryView() }
         .sheet(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
+        .sheet(item: $selectedTaskRoot) { TaskBlueprintView(rootTaskID: $0.id) }
         .alert("导入蓝图", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
             Button("知道了") { importMessage = nil }
         } message: { Text(importMessage ?? "") }
@@ -76,6 +92,43 @@ struct BlueprintsView: View {
         } catch {
             importMessage = "导入失败：\(error.localizedDescription)"
         }
+    }
+}
+
+private struct TaskBlueprintCard: View {
+    @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
+    let root: TaskItem
+
+    private var children: [TaskItem] { TaskTreeProjection.descendants(of: root.id, in: store.tasks) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.title3)
+                    .foregroundStyle(preferences.accentColor)
+                    .frame(width: 38, height: 38)
+                    .background(preferences.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(root.title).font(.headline).lineLimit(2)
+                    Text("任务蓝图").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            Text("\(children.count) 项子任务 · \(children.filter(\.isCompleted).count) 项已完成")
+                .font(.subheadline).foregroundStyle(.secondary)
+            ProgressView(value: children.isEmpty ? 0 : Double(children.filter(\.isCompleted).count) / Double(children.count))
+                .tint(preferences.accentColor)
+            Text("与列表、四象限共用任务")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(preferences.accentColor.opacity(0.16)))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -135,13 +188,21 @@ struct BlueprintEditor: View {
     @State private var dueDate: Date
     @State private var status: BlueprintStatus
     @State private var colorHex: String
+    @State private var showDiscardConfirmation = false
+    private let initialDueDate: Date
+    private let cancelRequest: Int
+    private let onClose: (() -> Void)?
 
-    init(blueprint: BlueprintItem? = nil) {
+    init(blueprint: BlueprintItem? = nil, cancelRequest: Int = 0, onClose: (() -> Void)? = nil) {
+        let defaultDueDate = blueprint?.dueDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
         original = blueprint
         _name = State(initialValue: blueprint?.name ?? "")
         _goal = State(initialValue: blueprint?.goal ?? "")
         _startDate = State(initialValue: blueprint?.startDate ?? .now)
-        _dueDate = State(initialValue: blueprint?.dueDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now)
+        _dueDate = State(initialValue: defaultDueDate)
+        initialDueDate = defaultDueDate
+        self.cancelRequest = cancelRequest
+        self.onClose = onClose
         _status = State(initialValue: blueprint?.status ?? .active)
         _colorHex = State(initialValue: blueprint?.colorHex ?? "4F65D9")
     }
@@ -167,7 +228,7 @@ struct BlueprintEditor: View {
             .formStyle(.grouped)
             HStack {
                 Spacer()
-                Button("取消", role: .cancel) { dismiss() }
+                Button("取消") { cancel() }
                 Button(original == nil ? "创建蓝图" : "保存修改") {
                     let item = BlueprintItem(
                         id: original?.id ?? UUID(), name: name.trimmingCharacters(in: .whitespacesAndNewlines), goal: goal,
@@ -176,7 +237,7 @@ struct BlueprintEditor: View {
                         originalDueDate: original?.originalDueDate, archivedAt: original?.archivedAt
                     )
                     if original == nil { store.addBlueprint(item) } else { store.updateBlueprint(item) }
-                    dismiss()
+                    close()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -184,7 +245,27 @@ struct BlueprintEditor: View {
             .padding(20)
         }
         .frame(width: 520, height: 470)
+        .onChange(of: cancelRequest) { _, _ in
+            if !showDiscardConfirmation { cancel() }
+        }
+        .onExitCommand { cancel() }
+        .confirmationDialog("放弃未保存的蓝图？", isPresented: $showDiscardConfirmation) {
+            Button("放弃", role: .destructive) { close() }
+            Button("继续编辑", role: .cancel) { }
+        } message: { Text("当前填写的内容将丢失。") }
     }
+
+    private func cancel() {
+        let hasChanges = name != (original?.name ?? "")
+            || goal != (original?.goal ?? "")
+            || !Calendar.current.isDate(startDate, inSameDayAs: original?.startDate ?? startDate)
+            || !Calendar.current.isDate(dueDate, inSameDayAs: initialDueDate)
+            || status != (original?.status ?? .active)
+            || colorHex != (original?.colorHex ?? "4F65D9")
+        if hasChanges { showDiscardConfirmation = true } else { close() }
+    }
+
+    private func close() { if let onClose { onClose() } else { dismiss() } }
 }
 
 struct BlueprintDetailView: View {
@@ -200,7 +281,13 @@ struct BlueprintDetailView: View {
     @State private var isRescheduling = false
     @State private var operationMessage: String?
     @State private var editingTask: TaskItem?
+    @State private var focusedTaskID: UUID?
     @State private var isAIReplanning = false
+
+    init(blueprintID: UUID, focusTaskID: UUID? = nil) {
+        self.blueprintID = blueprintID
+        _focusedTaskID = State(initialValue: focusTaskID)
+    }
 
     private var blueprint: BlueprintItem? { store.blueprints.first { $0.id == blueprintID } }
 
@@ -217,7 +304,7 @@ struct BlueprintDetailView: View {
                         .padding(.horizontal, 24).padding(.top, 18).padding(.bottom, 14)
                         Divider()
                         if mode == .workflow {
-                            BlueprintWorkflowView(blueprint: blueprint)
+                            BlueprintWorkflowView(blueprint: blueprint, focusTaskID: focusedTaskID)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             ScrollView {
@@ -267,12 +354,21 @@ struct BlueprintDetailView: View {
         }
         .sheet(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprintID) }
         .sheet(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprintID, stage: $0) }
-        .sheet(isPresented: $isAddingTask) { TaskComposerView(blueprintID: blueprintID) }
+        .clickAwayPopover(isPresented: $isAddingTask) { request, close in
+            TaskComposerView(blueprintID: blueprintID, opensBlueprintOnSave: false,
+                             cancelRequest: request, onClose: close)
+        }
         .sheet(item: $editingTask) { TaskEditor(task: $0) }
         .sheet(isPresented: $isRescheduling) { ReschedulePreviewView(blueprintID: blueprintID) }
         .sheet(isPresented: $isAIReplanning) { if let blueprint { AIReplanView(blueprint: blueprint) } }
-        .sheet(isPresented: $isEditing) {
-            if let blueprint { BlueprintEditor(blueprint: blueprint) }
+        .clickAwayPopover(isPresented: $isEditing) { request, close in
+            if let blueprint { BlueprintEditor(blueprint: blueprint, cancelRequest: request, onClose: close) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .focusBlueprintTask)) { notification in
+            if notification.userInfo?["blueprintID"] as? UUID == blueprintID {
+                focusedTaskID = notification.object as? UUID
+                mode = .workflow
+            }
         }
         .confirmationDialog("删除蓝图？", isPresented: $showDeleteConfirmation) {
             Button("删除蓝图", role: .destructive) {

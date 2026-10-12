@@ -5,6 +5,7 @@ struct TodayWorkbenchView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var selectedBlueprint: BlueprintItem?
+    @State private var selectedQuadrant: Quadrant?
 
     let onSelect: (TaskItem) -> Void
     let onReport: () -> Void
@@ -40,42 +41,44 @@ struct TodayWorkbenchView: View {
         GeometryReader { geometry in
             let showRail = geometry.size.width >= 875
             ScrollView {
-                HStack(alignment: .top, spacing: 25) {
+                HStack(alignment: .top, spacing: AppSpacing.x6) {
                     VStack(alignment: .leading, spacing: 0) {
                         pageIntroduction
                         if let focusTask {
                             focusCard(focusTask)
-                                .padding(.top, 27)
+                                .padding(.top, AppSpacing.x6)
                         } else {
                             emptyFocus
-                                .padding(.top, 27)
+                                .padding(.top, AppSpacing.x6)
                         }
+                        todayQuadrantOverview
+                            .padding(.top, AppSpacing.x6)
                         sectionHeading
-                            .padding(.top, 30)
-                        VStack(spacing: 13) {
+                            .padding(.top, AppSpacing.x8)
+                        VStack(spacing: AppSpacing.x3) {
                             ForEach(groups) { group in
-                                let otherTasks = group.tasks.filter { $0.id != focusTask?.id }
+                                let otherTasks = group.tasks.filter { $0.id != focusTask?.id && (selectedQuadrant == nil || ($0.needsAction && $0.quadrant == selectedQuadrant)) }
                                 if !otherTasks.isEmpty {
                                     blueprintGroup(group, tasks: otherTasks)
                                 }
                             }
-                            let otherUnassigned = unassigned.filter { $0.id != focusTask?.id }
+                            let otherUnassigned = unassigned.filter { $0.id != focusTask?.id && (selectedQuadrant == nil || ($0.needsAction && $0.quadrant == selectedQuadrant)) }
                             if !otherUnassigned.isEmpty {
                                 unassignedGroup(otherUnassigned)
                             }
                             if store.todayTasks.isEmpty {
                                 emptyActionTips
-                            } else if groups.allSatisfy({ $0.tasks.allSatisfy { $0.id == focusTask?.id } }) && unassigned.allSatisfy({ $0.id == focusTask?.id }) {
-                                Text("其余今日事项都已处理。保持这个节奏。")
+                            } else if groups.allSatisfy({ $0.tasks.allSatisfy { $0.id == focusTask?.id || (selectedQuadrant != nil && (!$0.needsAction || $0.quadrant != selectedQuadrant)) } }) && unassigned.allSatisfy({ $0.id == focusTask?.id || (selectedQuadrant != nil && (!$0.needsAction || $0.quadrant != selectedQuadrant)) }) {
+                                Text(selectedQuadrant == nil ? "其余今日事项都已处理。保持这个节奏。" : "该象限暂无其他今日事项。")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, minHeight: 90)
                             }
                         }
-                        .padding(.top, 17)
+                        .padding(.top, AppSpacing.x4)
                         if !showRail {
                             contextPanel
-                                .padding(.top, 24)
+                                .padding(.top, AppSpacing.x6)
                         }
                     }
                     .frame(maxWidth: 760, alignment: .leading)
@@ -87,8 +90,8 @@ struct TodayWorkbenchView: View {
                 }
                 .frame(maxWidth: 1100, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 30)
-                .padding(.top, 30)
+                .padding(.horizontal, AppSpacing.x8)
+                .padding(.top, AppSpacing.x8)
                 .padding(.bottom, 42)
             }
         }
@@ -103,9 +106,8 @@ struct TodayWorkbenchView: View {
                     .tracking(1.1)
                     .foregroundStyle(preferences.accentColor)
                 Text("今天，推进最重要的事")
-                    .font(.system(size: 29, weight: .bold, design: .rounded))
-                    .tracking(-0.7)
-                Text("任务围绕蓝图组织，先做当前重点，再处理其余事项。")
+                    .font(AppTypography.largeTitle)
+                Text("以任务为基础，先做当前重点，再处理其余事项。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -138,7 +140,7 @@ struct TodayWorkbenchView: View {
                     .foregroundStyle(.white.opacity(0.75))
             }
             Text(task.title)
-                .font(.system(size: 23, weight: .semibold, design: .rounded))
+                .font(AppTypography.title)
                 .lineLimit(2)
                 .contentTransition(.opacity)
             HStack(spacing: 8) {
@@ -165,26 +167,22 @@ struct TodayWorkbenchView: View {
                     .foregroundStyle(.white.opacity(0.77))
                 Spacer()
                 if task.isInProgress {
-                    Button("查看事项", systemImage: "arrow.up.right") { onSelect(task) }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.white.opacity(0.2))
+                    AppButton(title: "查看事项", systemImage: "arrow.up.right", kind: .secondary,
+                              size: .compact, tint: .white) { onSelect(task) }
                 } else {
-                    Button("开始执行", systemImage: "play.fill") {
+                    AppButton(title: "开始执行", systemImage: "play.fill", size: .compact, tint: .white) {
                         store.start(task)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.white)
-                    .foregroundStyle(preferences.accentColor)
                     .disabled(store.executionBlockReason(for: task) != nil)
                     .help(store.executionBlockReason(for: task) ?? "开始执行当前重点")
                 }
             }
         }
         .foregroundStyle(.white)
-        .padding(23)
+        .padding(AppSpacing.x6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(focusBackground.gradient, in: RoundedRectangle(cornerRadius: 19))
-        .overlay(RoundedRectangle(cornerRadius: 19).stroke(.white.opacity(0.12)))
+        .background(focusBackground.gradient, in: RoundedRectangle(cornerRadius: AppRadius.prominent))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.prominent).stroke(.white.opacity(0.12)))
         .shadow(color: focusBackground.opacity(0.2), radius: 17, y: 8)
         .animation(motion, value: task.id)
     }
@@ -211,40 +209,83 @@ struct TodayWorkbenchView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(store.todayTasks.isEmpty ? "添加事项" : "生成日报", action: store.todayTasks.isEmpty ? onAddTask : onReport)
-                .buttonStyle(.borderedProminent)
+            AppButton(title: store.todayTasks.isEmpty ? "添加事项" : "生成日报",
+                      tint: preferences.accentColor,
+                      action: store.todayTasks.isEmpty ? onAddTask : onReport)
         }
-        .padding(24)
+        .padding(AppSpacing.x6)
         .frame(maxWidth: .infinity, minHeight: 133)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 19))
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.prominent))
     }
 
     private var sectionHeading: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("今日行动")
-                    .font(.system(size: 18, weight: .semibold, design: .rounded))
-                Text("按蓝图汇总，完成一项就推进一格。")
+                    .font(AppTypography.title)
+                Text(selectedQuadrant.map { "已筛选：\($0.title) · 当前重点始终置顶" } ?? "按关联蓝图分组，完成一项就推进一格。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if selectedQuadrant != nil {
+                Button("清除筛选") { selectedQuadrant = nil }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(preferences.accentColor)
+            }
             AddTaskControl(onAddTask: onAddTask, onAddCompleted: onAddCompleted, onAddWithAI: onAddWithAI)
-                .buttonStyle(.borderless)
-                .tint(preferences.accentColor)
+        }
+    }
+
+    private var todayQuadrantOverview: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.x3) {
+            HStack {
+                Label("今日四象限", systemImage: "square.grid.2x2")
+                    .font(AppTypography.headline)
+                Spacer()
+                Text("选择象限，筛选下方事项")
+                    .font(AppTypography.caption)
+                    .foregroundStyle(.secondary)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: AppSpacing.x2)], spacing: AppSpacing.x2) {
+                ForEach(Quadrant.allCases) { quadrant in
+                    let count = actionableTasks.filter { $0.quadrant == quadrant }.count
+                    Button {
+                        selectedQuadrant = selectedQuadrant == quadrant ? nil : quadrant
+                    } label: {
+                        HStack(spacing: AppSpacing.x2) {
+                            Circle().fill(preferences.color(for: quadrant)).frame(width: 7, height: 7)
+                            Text(quadrant.title).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Text("\(count)").monospacedDigit().fontWeight(.semibold)
+                        }
+                        .font(AppTypography.callout)
+                        .padding(.horizontal, AppSpacing.x3)
+                        .frame(height: 44)
+                        .background(selectedQuadrant == quadrant ? preferences.accentColor.opacity(0.12) : preferences.cardBackground,
+                                    in: RoundedRectangle(cornerRadius: AppRadius.control))
+                        .overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(selectedQuadrant == quadrant ? preferences.accentColor.opacity(0.5) : AppColors.border))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(quadrant.title)，\(count) 项今日待办")
+                    .accessibilityAddTraits(selectedQuadrant == quadrant ? [.isSelected] : [])
+                }
+            }
         }
     }
 
     private var emptyActionTips: some View {
         HStack(spacing: 12) {
-            Button("新增待办", systemImage: "plus.circle", action: onAddTask)
-            Button("记录已完成", systemImage: "checkmark.circle", action: onAddCompleted)
-            Button("AI 一句话生成", systemImage: "sparkles", action: onAddWithAI)
+            AppButton(title: "新增待办", systemImage: "plus.circle", kind: .secondary,
+                      size: .compact, tint: preferences.accentColor, action: onAddTask)
+            AppButton(title: "记录已完成", systemImage: "checkmark.circle", kind: .secondary,
+                      size: .compact, tint: preferences.accentColor, action: onAddCompleted)
+            AppButton(title: "AI 一句话生成", systemImage: "sparkles", kind: .secondary,
+                      size: .compact, tint: preferences.accentColor, action: onAddWithAI)
         }
-        .buttonStyle(.bordered)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 16))
+        .padding(AppSpacing.x4)
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
     }
 
     private func blueprintGroup(_ group: TodayBlueprintTaskGroup, tasks: [TaskItem]) -> some View {
@@ -277,8 +318,8 @@ struct TodayWorkbenchView: View {
                 TodayActionRow(task: task, onSelect: onSelect)
             }
         }
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).stroke(.primary.opacity(0.07)))
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
     }
 
     private func unassignedGroup(_ tasks: [TaskItem]) -> some View {
@@ -295,8 +336,8 @@ struct TodayWorkbenchView: View {
                 TodayActionRow(task: task, onSelect: onSelect, showAssignment: true)
             }
         }
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).stroke(.primary.opacity(0.07)))
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
     }
 
     private var contextPanel: some View {
@@ -333,10 +374,10 @@ struct TodayWorkbenchView: View {
                 .frame(maxWidth: .infinity)
                 .buttonStyle(.bordered)
         }
-        .padding(20)
+        .padding(AppSpacing.x5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).stroke(.primary.opacity(0.07)))
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
     }
 
     @ViewBuilder
@@ -477,6 +518,9 @@ private struct TodayActionRow: View {
                     Button("恢复为待完成", systemImage: "arrow.uturn.backward") { withAnimation(motion) { store.restore(task) } }
                 }
                 Divider()
+                Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
+                    TaskBlueprintNavigation.open(task)
+                }
                 Button("编辑事项", systemImage: "pencil") { onSelect(task) }
             } label: { Image(systemName: "ellipsis").comfortableIconTarget() }
                 .help("更多操作")

@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import Foundation
 import ImageIO
 
@@ -7,7 +11,11 @@ struct WorkflowImage: Identifiable, Codable, Equatable {
     var name: String
     var data: Data
 
+    #if os(macOS)
     var nsImage: NSImage? { NSImage(data: data) }
+    #else
+    var uiImage: UIImage? { UIImage(data: data) }
+    #endif
 
     static func imported(data: Data, name: String) throws -> WorkflowImage {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -16,7 +24,13 @@ struct WorkflowImage: Identifiable, Codable, Equatable {
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: 1600
               ] as CFDictionary),
-              let compressed = NSBitmapImageRep(cgImage: thumbnail).representation(using: .jpeg, properties: [.compressionFactor: 0.82]) else {
+              let compressed = {
+                  #if os(macOS)
+                  NSBitmapImageRep(cgImage: thumbnail).representation(using: .jpeg, properties: [.compressionFactor: 0.82])
+                  #else
+                  UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.82)
+                  #endif
+              }() else {
             throw NSError(domain: "序图片", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法读取这张图片。"])
         }
         return WorkflowImage(name: name, data: compressed)
@@ -88,8 +102,11 @@ enum WorkflowGraph {
         func level(_ id: UUID, visiting: Set<UUID> = []) -> Int {
             if let cached = levels[id] { return cached }
             guard let task = byID[id], !visiting.contains(id) else { return 0 }
+            // Parent links express hierarchy for layout only; they never become execution dependencies.
             let dependencies = task.effectiveDependencyIDs.filter { ids.contains($0) }
-            let result = dependencies.isEmpty ? 0 : 1 + (dependencies.map { level($0, visiting: visiting.union([id])) }.max() ?? 0)
+            let hierarchyParent = task.parentTaskID.map { ids.contains($0) ? [$0] : [] } ?? []
+            let layoutParents = Array(Set(dependencies + hierarchyParent))
+            let result = layoutParents.isEmpty ? 0 : 1 + (layoutParents.map { level($0, visiting: visiting.union([id])) }.max() ?? 0)
             levels[id] = result
             return result
         }
@@ -102,5 +119,43 @@ enum WorkflowGraph {
             }
         }
         return positions
+    }
+}
+
+/// A read-only task hierarchy used by blueprint presentations.
+enum TaskTreeProjection {
+    /// Finds the topmost existing parent; broken links and cycles stay navigable.
+    static func rootID(containing taskID: UUID, in tasks: [TaskItem]) -> UUID {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var current = taskID
+        var visited: Set<UUID> = [taskID]
+        while let parentID = byID[current]?.parentTaskID,
+              byID[parentID] != nil,
+              visited.insert(parentID).inserted {
+            current = parentID
+        }
+        return current
+    }
+
+    static func roots(in tasks: [TaskItem]) -> [TaskItem] {
+        let parentIDs = Set(tasks.compactMap(\.parentTaskID))
+        return tasks.filter { $0.parentTaskID == nil && $0.blueprintID == nil && parentIDs.contains($0.id) }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    static func descendants(of rootID: UUID, in tasks: [TaskItem]) -> [TaskItem] {
+        var result: [TaskItem] = []
+        var seen: Set<UUID> = [rootID]
+        var frontier = [rootID]
+        while !frontier.isEmpty {
+            let parentID = frontier.removeFirst()
+            let children = tasks.filter { $0.parentTaskID == parentID }
+                .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
+            for child in children where seen.insert(child.id).inserted {
+                result.append(child)
+                frontier.append(child.id)
+            }
+        }
+        return result
     }
 }

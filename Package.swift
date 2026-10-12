@@ -8,7 +8,7 @@ let package = Package(
         .executable(name: "Quadrant", targets: ["Quadrant"])
     ],
     targets: [
-        .executableTarget(name: "Quadrant"),
+        .executableTarget(name: "Quadrant", exclude: ["DesignSystem/Colors.xcassets"]),
         .testTarget(name: "QuadrantTests", dependencies: ["Quadrant"])
     ]
 )
