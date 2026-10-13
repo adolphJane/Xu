@@ -73,10 +73,17 @@ jobs:
           echo "NOTARY_KEY_ID=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
           echo "NOTARY_ISSUER_ID=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
 
-      - name: Build universal DMG
+      - name: Build universal DMG and app archive
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
         run: zsh scripts/package-macos.sh
+
+      - name: Upload app archive to Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-app-${{ github.ref_name }}
+          path: dist/Xu-${{ github.ref_name }}-app.zip
+          if-no-files-found: error
 
       - name: Generate release notes
         env:
@@ -94,7 +101,8 @@ jobs:
             echo
             echo "## 安装"
             echo
-            echo "下载 Xu-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖到“Applications”快捷入口。"
+            echo "推荐下载 Xu-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖到“Applications”快捷入口。"
+            echo "也可下载 Xu-${RELEASE_TAG}-app.zip，解压后获得独立的“序.app”。"
             if [[ "$SIGNING_MODE" == "signed" ]]; then
               echo "此版本已通过 Developer ID 签名和 Apple 公证。"
             else
@@ -110,6 +118,7 @@ jobs:
           if [[ "$SIGNING_MODE" != "signed" ]]; then release_flags+=(--prerelease); fi
           gh release create "${GITHUB_REF_NAME}" \
             "dist/Xu-${GITHUB_REF_NAME}.dmg" \
+            "dist/Xu-${GITHUB_REF_NAME}-app.zip" \
             --title "序 ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             --verify-tag \

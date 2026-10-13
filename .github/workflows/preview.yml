@@ -1,4 +1,4 @@
-name: Build macOS preview DMG
+name: Build macOS preview packages
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Build universal DMG
+      - name: Build universal DMG and app archive
         env:
           RELEASE_VERSION: preview-${{ github.sha }}
         run: zsh scripts/package-unsigned.sh
@@ -31,5 +31,13 @@ jobs:
         with:
           name: Xu-preview-${{ github.sha }}
           path: dist/Xu-preview-${{ github.sha }}.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload app archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-preview-app-${{ github.sha }}
+          path: dist/Xu-preview-${{ github.sha }}-app.zip
           if-no-files-found: error
           retention-days: 14
