@@ -12,7 +12,6 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${PROJECT_DIR}/Packaging/Info.plist")"
 RELEASE_NAME="${RELEASE_VERSION:-v${APP_VERSION}-local-${STAMP}}"
 DMG_PATH="${DIST_DIR}/Xu-${RELEASE_NAME}.dmg"
-APP_ZIP_PATH="${DIST_DIR}/Xu-${RELEASE_NAME}-app.zip"
 
 if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
   if [[ -z "${NOTARY_API_KEY_PATH:-}" || -z "${NOTARY_KEY_ID:-}" || -z "${NOTARY_ISSUER_ID:-}" ]]; then
@@ -47,8 +46,3 @@ if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
 else
   print "内测包已生成（临时签名，macOS 会显示安全提示）：${DMG_PATH}"
 fi
-
-# Keep the same universal .app available separately from the installer image.
-# ditto preserves bundle metadata and executable permissions in the archive.
-ditto -c -k --sequesterRsrc --keepParent "${APP_DIR}" "${APP_ZIP_PATH}"
-print "独立应用包已生成：${APP_ZIP_PATH}"

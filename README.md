@@ -47,18 +47,18 @@ open dist/序.app
 
 产物位于 `dist/序.app`。本地使用临时签名；首次打开可能出现 macOS 安全提示，操作见[内测安装说明](Packaging/INSTALL-TEST.md)。
 
-推送到 `main` 后，GitHub Actions 会生成 Apple Silicon 与 Intel 通用架构的预览 `.dmg` 和包含 `序.app` 的 `-app.zip`，两者分别出现在对应运行记录的 **Artifacts** 中。预览包使用临时签名，不会创建 Release。
+推送到 `main` 后，GitHub Actions 会生成 Apple Silicon 与 Intel 通用架构的预览 `.dmg`，可在对应运行记录的 **Artifacts** 中下载。预览包使用临时签名，不会创建 Release。
 
 ## GitHub Releases 自动打包
 
-正式发布时，将 `Packaging/Info.plist` 中的应用版本更新并提交，再推送对应的版本标签。GitHub Actions 会构建通用架构 DMG、独立应用包 ZIP，并创建 GitHub Release：
+正式发布时，将 `Packaging/Info.plist` 中的应用版本更新并提交，再推送对应的版本标签。GitHub Actions 会构建通用架构 DMG 并创建 GitHub Release：
 
 ```bash
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.4.6
+git push origin v0.4.6
 ```
 
-标签版本必须与 `CFBundleShortVersionString` 一致。`Xu-v版本号.dmg` 和 `Xu-v版本号-app.zip` 会同时作为 Release 附件；ZIP 解压后可直接获得 `序.app`。发布说明会自动列出上一个版本标签之后的提交内容。配置下列 GitHub Actions Secrets 后，工作流会使用 Developer ID 签名、提交 Apple 公证并将公证票据附在 DMG 上：
+标签版本必须与 `CFBundleShortVersionString` 一致。生成的 `Xu-v版本号.dmg` 会作为 Release 附件发布，说明会自动列出上一个版本标签之后的提交内容。配置下列 GitHub Actions Secrets 后，工作流会使用 Developer ID 签名、提交 Apple 公证并将公证票据附在 DMG 上：
 
 - `APPLE_CERTIFICATE_P12_BASE64`：Developer ID Application 证书及私钥的 `.p12` 文件内容，以 Base64 编码
 - `APPLE_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码

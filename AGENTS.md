@@ -13,8 +13,8 @@
 - **本地开发调试只交付 `.app`**：在仓库根目录运行 `zsh scripts/build-app.sh`，产物为 `dist/序.app`。需要打开时运行 `open dist/序.app`。本地调试不要以生成 `.dmg` 作为默认步骤。
 - **每次修改代码后都必须生成并打开开发版 `.app`，让用户查看实际结果**：运行 `zsh scripts/build-app.sh` 更新 `dist/序.app`，然后运行 `open dist/序.app`。完成回复前确认应用已成功构建并打开；仅修改文档时无需重新构建应用。
 - `scripts/build-app.sh` 是组装应用包的统一入口。修改应用包内容时，同时确认本地构建和 CI 打包都使用该脚本，避免两套组装逻辑分叉。
-- **推送 `main` 后由 GitHub Actions 生成预览 `.dmg` 和独立 `.app` ZIP**：`.github/workflows/preview.yml` 调用 `scripts/package-unsigned.sh`，两种产物分别上传为该次运行的 Artifact。预览包使用临时签名，不创建 GitHub Release。
-- **发布版本通过 tag 生成 `.dmg` 和独立 `.app` ZIP**：先更新 `Packaging/Info.plist` 的版本号并提交，再推送与 `CFBundleShortVersionString` 一致的 `vX.Y.Z` 标签。`.github/workflows/release.yml` 调用 `scripts/package-macos.sh`，生成通用架构 DMG 和包含 `序.app` 的 ZIP，上传 Actions Artifact 和 Release 附件，并附上自上个版本以来的变更说明。
+- **推送 `main` 后由 GitHub Actions 生成预览 `.dmg`**：`.github/workflows/preview.yml` 调用 `scripts/package-unsigned.sh`，产物上传为该次运行的 Artifact。预览包使用临时签名，不创建 GitHub Release。
+- **发布版本通过 tag 生成 `.dmg`**：先更新 `Packaging/Info.plist` 的版本号并提交，再推送与 `CFBundleShortVersionString` 一致的 `vX.Y.Z` 标签。`.github/workflows/release.yml` 调用 `scripts/package-macos.sh`，生成通用架构 DMG，附上自上个版本以来的变更说明并创建 GitHub Release。
 - GitHub Actions 的 DMG 应同时包含 Apple Silicon 和 Intel 架构，并提供将 `序.app` 拖入“应用程序”的入口。只有配置完整的 Apple 签名与公证凭据时，才将包标记为已签名、公证。
 - 完成构建或发布相关修改后，核对实际产物及对应的 Actions 运行结果；不要仅凭命令已启动就报告成功。
 
