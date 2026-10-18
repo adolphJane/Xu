@@ -14,6 +14,8 @@
 | Border | `AppColors.border` | 表面分隔。 |
 | Status | `success` / `warning` / `danger` | 完成、需注意、危险操作；状态始终同时配文字或图标。 |
 
+macOS 任务的持久完成态使用 `AppColors.taskCompleted(for:)`：纸张主题为暖灰褐，石墨及深色主题使用各自的低饱和灰调，高对比度模式使用黑／白。它与短暂的 `success` 成功反馈分开；任务同时保留勾选图标、划线和状态文字。
+
 iOS 颜色由 `Colors.xcassets` 的 Any/Dark 变体提供，采用与分类设计稿一致的暖纸张色系；macOS 先使用系统动态色，现有个性化主题通过 `AppPreferences` 保留。新增主题映射必须验证浅色、深色及高对比度。避免把 HEX 直接写进业务视图。不要仅靠颜色传达状态。
 
 实心按钮文字通过 `AppColors.foreground(on:)` 按背景明度选择黑或白；macOS 自定义强调色也走同一规则，避免浅色主题出现白字低对比度。

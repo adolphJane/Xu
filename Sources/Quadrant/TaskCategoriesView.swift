@@ -348,16 +348,16 @@ struct TaskCategoriesView: View {
                 }
             } label: {
                 RoundedRectangle(cornerRadius: AppRadius.small / 2)
-                    .fill(task.isCompleted ? AppColors.success : .clear)
+                    .fill(task.isCompleted ? AppColors.taskCompleted(for: preferences) : .clear)
                     .overlay {
                         RoundedRectangle(cornerRadius: AppRadius.small / 2)
-                            .stroke(task.isCompleted ? AppColors.success : AppColors.textSecondary.opacity(0.65), lineWidth: 1.5)
+                            .stroke(task.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary.opacity(0.65), lineWidth: 1.5)
                     }
                     .overlay {
                         if task.isCompleted {
                             Image(systemName: "checkmark")
                                 .font(AppTypography.caption.weight(.bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(AppColors.foreground(on: AppColors.taskCompleted(for: preferences)))
                         }
                     }
                     .frame(width: CategoryLayout.checkboxSize, height: CategoryLayout.checkboxSize)

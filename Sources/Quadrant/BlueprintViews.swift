@@ -479,6 +479,7 @@ struct BlueprintDetailView: View {
 
 struct StagePanel: View {
     @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
     let stage: StageItem
     let isFirst: Bool
     let isLast: Bool
@@ -506,7 +507,7 @@ struct StagePanel: View {
                     HStack {
                         Button { store.toggleMilestone(milestone) } label: {
                             Image(systemName: milestone.isCompleted ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(milestone.isCompleted ? .green : .secondary)
+                                .foregroundStyle(milestone.isCompleted ? AppColors.taskCompleted(for: preferences) : .secondary)
                                 .comfortableIconTarget(36)
                         }.buttonStyle(.plain)
                         Text(milestone.name).strikethrough(milestone.isCompleted)

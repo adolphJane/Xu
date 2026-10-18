@@ -152,7 +152,7 @@ struct TaskBlueprintView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 7) {
                                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(task.isCompleted ? .green : preferences.accentColor)
+                                        .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : preferences.accentColor)
                                     Text(task.title).font(.headline).lineLimit(2)
                                 }
                                 Text(task.id == rootTaskID ? "主任务" : "子任务")

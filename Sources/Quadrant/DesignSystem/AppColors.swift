@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 enum AppColors {
     #if os(iOS)
@@ -19,6 +22,24 @@ enum AppColors {
     static let success = Color.green
     static let warning = Color.orange
     static let danger = Color.red
+
+    /// A quiet, theme-aware task completion color, distinct from transient success feedback.
+    @MainActor static func taskCompleted(for preferences: AppPreferences) -> Color {
+        let isDark = preferences.colorScheme == .dark ||
+            (preferences.colorScheme == nil && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        if preferences.highContrast {
+            return isDark ? .white : .black
+        }
+        let hex: String = switch preferences.resolvedPreset {
+        case .paper: "786858"  // warm taupe on paper
+        case .stone: "596D69"  // cool slate on stone
+        case .ocean: "A7BAC4"
+        case .forest: "ACB8AB"
+        case .ink: "B9AEA4"
+        case .system: isDark ? "B9AEA4" : "667078"
+        }
+        return Color(appHex: hex)
+    }
     #endif
 
     static let textPrimary = Color.primary

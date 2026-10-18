@@ -648,7 +648,7 @@ private struct TodayOutlineRow: View {
             } label: {
                 Image(systemName: task.isCompleted ? "checkmark.circle.fill" : task.isCancelled ? "xmark.circle" : "circle")
                     .todayText(.title2)
-                    .foregroundStyle(task.isCompleted ? preferences.accentColor : AppColors.textSecondary)
+                    .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary)
                     .frame(width: AppSpacing.x8, height: AppSpacing.x8)
                     .contentShape(Rectangle())
             }

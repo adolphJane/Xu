@@ -520,7 +520,7 @@ struct TasksHubView: View {
         let symbol = task.isCompleted ? "checkmark.circle.fill" : task.isCancelled ? "xmark.circle.fill" : "circle"
         let icon = Image(systemName: symbol)
             .font(.title3)
-            .foregroundStyle(task.isCompleted ? AppColors.success : AppColors.textSecondary)
+            .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary)
             .frame(width: 36, height: 36)
             .contentShape(Rectangle())
         if task.isCompleted {
@@ -615,7 +615,7 @@ struct TasksHubView: View {
                             ForEach(children) { child in
                                 HStack(alignment: .top, spacing: AppSpacing.x2) {
                                     Image(systemName: child.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(child.isCompleted ? AppColors.success : AppColors.textSecondary)
+                                        .foregroundStyle(child.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary)
                                     Text(child.title)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Text(child.displayStatusTitle)

@@ -373,6 +373,7 @@ struct PageHeader: View {
 
 struct TodayView: View {
     @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
     @State private var selectedBlueprint: BlueprintItem?
     let onSelect: (TaskItem) -> Void
     let onReport: () -> Void
@@ -418,7 +419,7 @@ struct TodayView: View {
                     .help("应用设置")
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 12)], spacing: 12) {
-                    StatCard(title: "今日完成", value: store.completionText, icon: "checkmark.circle.fill", color: .green)
+                    StatCard(title: "今日完成", value: store.completionText, icon: "checkmark.circle.fill", color: AppColors.taskCompleted(for: preferences))
                     StatCard(title: "进行中", value: "\(store.todayTasks.filter(\.isInProgress).count)", icon: "play.circle.fill", color: .blue)
                     StatCard(title: "已取消", value: "\(store.cancelledTodayCount)", icon: "xmark.circle.fill", color: .orange)
                     StatCard(title: "今日延期", value: "\(store.postponedTodayCount)", icon: "calendar.badge.clock", color: .purple)
@@ -788,6 +789,7 @@ struct TaskCard: View {
                     if task.parentTaskID != nil && !embedded { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
                     if task.planLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
                     Text(task.title).strikethrough(task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
+                        .foregroundStyle(task.isCompleted ? AppColors.textSecondary : AppColors.textPrimary)
                         .font(embedded ? AppTypography.desktop(.body, scale: preferences.fontScale,
                                                               weight: .semibold, design: preferences.fontStyle.design) : nil)
                 }
@@ -800,7 +802,7 @@ struct TaskCard: View {
                     Text(task.displayStatusTitle)
                     .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
                                                 design: preferences.fontStyle.design))
-                    .foregroundStyle(statusColor)
+                    .foregroundStyle(task.isCompleted ? AppColors.textSecondary : statusColor)
                     if task.effectiveStatus == .blocked, let reason = task.blockReason, !reason.isEmpty {
                         Label(reason, systemImage: "lock")
                             .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
@@ -981,7 +983,7 @@ struct TaskCard: View {
         case .unscheduled: .secondary
         case .pending: .secondary
         case .inProgress: .blue
-        case .completed: .green
+        case .completed: AppColors.taskCompleted(for: preferences)
         case .cancelled: .orange
         case .postponed: .purple
         case .blocked: .red

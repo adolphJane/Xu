@@ -132,7 +132,7 @@ struct TaskEditor: View {
                             } label: {
                                 HStack(spacing: AppSpacing.x3) {
                                     Image(systemName: child.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(child.isCompleted ? AppColors.success : AppColors.textSecondary)
+                                        .foregroundStyle(child.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary)
                                     Text(child.title).foregroundStyle(AppColors.textPrimary)
                                     Spacer()
                                     Text(child.displayStatusTitle)

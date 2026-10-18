@@ -299,7 +299,7 @@ struct BlueprintWorkflowView: View {
                               let start = layout[edge.from], let end = layout[edge.to] else { continue }
                         context.stroke(
                             edgePath(from: start, fromHeight: cardHeight(from), to: end, toHeight: cardHeight(to)),
-                            with: .color(from.isCompleted ? .green.opacity(0.7) : .secondary.opacity(0.55)),
+                            with: .color(from.isCompleted ? AppColors.taskCompleted(for: preferences).opacity(0.7) : .secondary.opacity(0.55)),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round)
                         )
                     }
@@ -386,7 +386,7 @@ struct BlueprintWorkflowView: View {
                 Button { selectedID = task.id } label: {
                     HStack(spacing: 12) {
                         Image(systemName: task.isCompleted ? "checkmark.circle.fill" : store.executionBlockReason(for: task) == nil ? "play.circle" : "lock.circle")
-                            .foregroundStyle(task.isCompleted ? .green : .secondary)
+                            .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : .secondary)
                         VStack(alignment: .leading) {
                             Text(task.title).font(.headline)
                             if let reason = store.executionBlockReason(for: task), !task.isCompleted {
@@ -535,6 +535,7 @@ struct BlueprintWorkflowView: View {
 
 private struct WorkflowNodeCard: View {
     @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
     @State private var isBlocking = false
     @State private var blockReason = ""
     let task: TaskItem
@@ -558,7 +559,7 @@ private struct WorkflowNodeCard: View {
         return blockingReason == nil ? "可开始" : "等待前置"
     }
     private var stateColor: Color {
-        if task.isCompleted { return .green }
+        if task.isCompleted { return AppColors.taskCompleted(for: preferences) }
         if task.isCancelled || task.effectiveStatus == .blocked { return .orange }
         if task.effectiveStatus == .postponed { return .purple }
         return blockingReason == nil ? .blue : .secondary
