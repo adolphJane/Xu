@@ -13,11 +13,13 @@ enum TasksScope: String, CaseIterable, Identifiable {
     case all = "全部"
     var id: Self { self }
 
-    func includes(_ task: TaskItem) -> Bool {
-        switch self {
-        case .active: task.needsAction
-        case .inbox: task.isUnscheduled && task.needsAction
-        case .processed: task.isCompleted || task.isCancelled
+    func includes(_ task: TaskItem, in tasks: [TaskItem]) -> Bool {
+        let rootID = TaskTreeProjection.rootID(containing: task.id, in: tasks)
+        let seriesTask = tasks.first { $0.id == rootID } ?? task
+        return switch self {
+        case .active: seriesTask.needsAction
+        case .inbox: seriesTask.isUnscheduled && seriesTask.needsAction
+        case .processed: seriesTask.isCompleted || seriesTask.isCancelled
         case .all: true
         }
     }
@@ -38,6 +40,8 @@ struct TasksHubView: View {
     @State private var selectedCategory = "全部分类"
     @State private var expandedSeriesIDs: Set<UUID> = []
     @State private var expandedQuadrantSeries: Set<String> = []
+    @State private var completingOriginalTasks: [UUID: TaskItem] = [:]
+    @State private var revealedCompletionIDs: Set<UUID> = []
     private enum DetailAction {
         case edit(TaskItem)
         case blueprint(TaskItem)
@@ -73,9 +77,23 @@ struct TasksHubView: View {
         Array(Set(store.tasks.map(\.categoryName))).sorted()
     }
 
+    private var matchingSourceTasks: [TaskItem] {
+        store.tasks.map { completingOriginalTasks[$0.id] ?? $0 }
+    }
+
+    private var displayedTasks: [TaskItem] {
+        store.tasks.map { task in
+            if let original = completingOriginalTasks[task.id], !revealedCompletionIDs.contains(task.id) {
+                return original
+            }
+            return task
+        }
+    }
+
     private var matchedTasks: [TaskItem] {
-        store.tasks.filter { task in
-            scope.includes(task)
+        let source = matchingSourceTasks
+        return source.filter { task in
+            scope.includes(task, in: source)
                 && (selectedCategory == "全部分类" || task.categoryName == selectedCategory)
                 && (searchText.isEmpty || task.title.localizedCaseInsensitiveContains(searchText))
         }
@@ -89,7 +107,52 @@ struct TasksHubView: View {
     }
 
     private var listGroups: [TaskSeriesGroup] {
-        TaskSeriesProjection.groups(matches: matchedTasks, allTasks: store.tasks)
+        TaskSeriesProjection.groups(matches: matchedTasks, allTasks: displayedTasks)
+    }
+
+    private func seriesCount(for option: TasksScope) -> Int {
+        let tasks = store.tasks
+        return Set(tasks.filter { option.includes($0, in: tasks) }
+            .map { TaskTreeProjection.rootID(containing: $0.id, in: tasks) }).count
+    }
+
+    private func completeWithSharedAnimation(_ task: TaskItem) {
+        guard !preferences.reduceMotion && !systemReduceMotion else {
+            store.markCompleted(task)
+            return
+        }
+        let before = Dictionary(store.tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        store.markCompleted(task)
+        let newlyCompleted = store.tasks.filter { $0.isCompleted && before[$0.id]?.isCompleted == false }
+        guard !newlyCompleted.isEmpty else { return }
+        let ids = Set(newlyCompleted.map(\.id))
+        for id in ids { completingOriginalTasks[id] = before[id] }
+
+        var expandedListRoot: UUID?
+        var expandedQuadrantKeys: Set<String> = []
+        if newlyCompleted.count > 1 {
+            let rootID = TaskTreeProjection.rootID(containing: task.id, in: store.tasks)
+            if presentation == .list, expandedSeriesIDs.insert(rootID).inserted {
+                expandedListRoot = rootID
+            } else if presentation == .quadrants {
+                for item in newlyCompleted {
+                    let key = "\(item.quadrant.rawValue):\(rootID.uuidString)"
+                    if expandedQuadrantSeries.insert(key).inserted { expandedQuadrantKeys.insert(key) }
+                }
+            }
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            withAnimation(AppTheme.standardAnimation) {
+                revealedCompletionIDs.formUnion(ids)
+            }
+            try? await Task.sleep(for: .milliseconds(450))
+            for id in ids { completingOriginalTasks.removeValue(forKey: id) }
+            revealedCompletionIDs.subtract(ids)
+            if let expandedListRoot { expandedSeriesIDs.remove(expandedListRoot) }
+            expandedQuadrantSeries.subtract(expandedQuadrantKeys)
+        }
     }
 
     var body: some View {
@@ -180,7 +243,7 @@ struct TasksHubView: View {
                 } label: {
                     HStack(spacing: AppSpacing.x1) {
                         Text(option.rawValue)
-                        Text("\(store.tasks.filter(option.includes).count)")
+                        Text("\(seriesCount(for: option))")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
@@ -255,7 +318,7 @@ struct TasksHubView: View {
                     .font(AppTypography.desktop(.headline, scale: preferences.fontScale,
                                                 weight: .semibold, design: preferences.fontStyle.design))
                 Spacer()
-                Text("\(matchedTasks.count) 项 · 含 \(matchedTasks.filter { $0.parentTaskID != nil }.count) 项子任务")
+                Text("\(listGroups.count) 个系列 · 含 \(matchedTasks.filter { $0.parentTaskID != nil }.count) 项子任务")
                     .font(font(.caption1).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -267,6 +330,8 @@ struct TasksHubView: View {
                 seriesCard(group)
             }
         }
+        .animation(preferences.reduceMotion || systemReduceMotion ? nil : AppTheme.standardAnimation,
+                   value: listGroups.map(\.id))
     }
 
     private var resultsFooter: some View {
@@ -285,6 +350,8 @@ struct TasksHubView: View {
                   alignment: .leading, spacing: AppSpacing.x4) {
             ForEach(Quadrant.allCases) { quadrant in
                 let matches = matchedTasks.filter { $0.quadrant == quadrant }
+                let groups = TaskSeriesProjection.groups(matches: matches, allTasks: displayedTasks,
+                                                         quadrant: quadrant)
                 AppCard(surface: preferences.cardBackground, elevated: false) {
                 VStack(alignment: .leading, spacing: AppSpacing.list) {
                     HStack(alignment: .top) {
@@ -293,7 +360,7 @@ struct TasksHubView: View {
                             Text(quadrant.subtitle).font(font(.caption1)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(matches.count) 项")
+                        Text("\(groups.count) 个系列")
                             .font(font(.caption1).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -303,8 +370,7 @@ struct TasksHubView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 90)
                     } else {
-                        ForEach(TaskSeriesProjection.groups(matches: matches, allTasks: store.tasks,
-                                                            quadrant: quadrant)) { group in
+                        ForEach(groups) { group in
                             quadrantSeriesCard(group, quadrant: quadrant)
                         }
                     }
@@ -338,6 +404,8 @@ struct TasksHubView: View {
                             taskRow(row, in: group)
                         }
                     }
+                    .animation(preferences.reduceMotion || systemReduceMotion ? nil : AppTheme.standardAnimation,
+                               value: group.rows.map(\.id))
                 }
             }
         }
@@ -419,6 +487,8 @@ struct TasksHubView: View {
                 } else {
                     TaskCard(task: row.task, embedded: true,
                              onSelect: onSelect,
+                             onCompleteTask: completeWithSharedAnimation,
+                             completionInProgress: completingOriginalTasks[row.id] != nil,
                              onShowDetails: { detailTask = $0 })
                 }
             }
@@ -471,9 +541,13 @@ struct TasksHubView: View {
     }
 
     private func taskDetails(_ task: TaskItem) -> some View {
-        VStack(spacing: 0) {
-            HStack(spacing: AppSpacing.x3) {
-                Text("事项详情").font(font(.headline, weight: .semibold))
+        let children = TaskTreeProjection.directChildren(of: task.id, in: store.tasks)
+        let parent = task.parentTaskID.flatMap { id in store.tasks.first { $0.id == id } }
+        let blockReason = task.needsAction ? store.executionBlockReason(for: task) : nil
+        return VStack(spacing: 0) {
+            HStack {
+                Label("事项详情", systemImage: "square.text.square")
+                    .font(font(.headline, weight: .semibold))
                 Spacer()
                 Button("关闭事项详情", systemImage: "xmark") { detailTask = nil }
                     .labelStyle(.iconOnly)
@@ -481,36 +555,92 @@ struct TasksHubView: View {
                     .frame(width: 36, height: 36)
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, AppSpacing.cardContent)
-            .padding(.vertical, AppSpacing.x2)
+            .padding(.horizontal, AppSpacing.page)
+            .padding(.vertical, AppSpacing.x3)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: AppSpacing.section) {
-                    VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                VStack(alignment: .leading, spacing: AppSpacing.x5) {
+                    VStack(alignment: .leading, spacing: AppSpacing.x3) {
+                        if let parent {
+                            Label("属于 \(parent.title)", systemImage: "arrow.turn.down.right")
+                                .font(font(.callout))
+                                .foregroundStyle(AppColors.textSecondary)
+                                .lineLimit(2)
+                        }
                         Text(task.title)
                             .font(font(.title2, weight: .semibold))
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
-                        AppBadge(title: task.displayStatusTitle, tone: .neutral)
+                        HStack(spacing: AppSpacing.x2) {
+                            AppBadge(title: task.displayStatusTitle, tone: detailTone(for: task))
+                            AppBadge(title: task.quadrant.title, tone: .neutral)
+                        }
                     }
-                    Grid(alignment: .leading, horizontalSpacing: AppSpacing.x6, verticalSpacing: AppSpacing.x3) {
-                        detailField("分类", value: task.categoryName)
-                        detailField("项目", value: task.projectName)
-                        detailField("优先级", value: task.quadrant.title)
-                        detailField("计划", value: task.isUnscheduled ? "暂未安排" : task.scheduledFor.formatted(date: .abbreviated, time: .omitted))
-                        detailField("截止", value: task.dueDate?.formatted(date: .abbreviated, time: .omitted) ?? "未设置")
-                        detailField("预计", value: "\(task.estimatedMinutes) 分钟")
-                    }
-                    if let reason = task.blockReason, !reason.isEmpty {
-                        Label(reason, systemImage: "exclamationmark.octagon")
+                    if let blockReason {
+                        Label(blockReason, systemImage: "exclamationmark.octagon")
                             .font(font(.callout))
                             .foregroundStyle(AppColors.warning)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(AppSpacing.x3)
+                            .background(AppColors.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: AppRadius.control))
                     }
-                    if !task.notes.isEmpty {
-                        VStack(alignment: .leading, spacing: AppSpacing.x2) {
-                            Text("备注").font(font(.headline, weight: .semibold))
-                            Text(task.notes).font(font(.body)).textSelection(.enabled)
+                    HStack(alignment: .top, spacing: AppSpacing.x3) {
+                        detailTile("计划", value: task.isUnscheduled ? "待安排" : task.scheduledFor.formatted(date: .abbreviated, time: .omitted), symbol: "calendar")
+                        detailTile("截止", value: task.dueDate?.formatted(date: .abbreviated, time: .shortened) ?? "未设置", symbol: "calendar.badge.clock")
+                    }
+                    HStack(alignment: .top, spacing: AppSpacing.x3) {
+                        detailTile("分类", value: task.categoryName, symbol: "tag")
+                        detailTile("项目", value: task.projectName, symbol: "folder")
+                    }
+                    HStack(spacing: AppSpacing.x2) {
+                        Label("预计 \(task.estimatedMinutes) 分钟", systemImage: "hourglass")
+                        if task.planLocked { Label("计划已锁定", systemImage: "lock") }
+                    }
+                    .font(font(.callout))
+                    .foregroundStyle(AppColors.textSecondary)
+                    if !children.isEmpty {
+                        VStack(alignment: .leading, spacing: AppSpacing.x3) {
+                            HStack {
+                                Label("下一步", systemImage: "checklist")
+                                    .font(font(.headline, weight: .semibold))
+                                Spacer()
+                                Text("\(children.filter(\.isCompleted).count) / \(children.count) 已完成")
+                                    .font(font(.callout))
+                                    .foregroundStyle(AppColors.textSecondary)
+                                    .monospacedDigit()
+                            }
+                            ProgressView(value: Double(children.filter(\.isCompleted).count), total: Double(children.count))
+                                .tint(preferences.accentColor)
+                                .accessibilityLabel("子任务进度")
+                            ForEach(children) { child in
+                                HStack(alignment: .top, spacing: AppSpacing.x2) {
+                                    Image(systemName: child.isCompleted ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(child.isCompleted ? AppColors.success : AppColors.textSecondary)
+                                    Text(child.title)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Text(child.displayStatusTitle)
+                                        .foregroundStyle(AppColors.textSecondary)
+                                }
+                                .font(font(.callout))
+                                .accessibilityElement(children: .combine)
+                            }
                         }
+                        .padding(AppSpacing.cardContent)
+                        .background(preferences.pageBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+                        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
+                    }
+                    if !task.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                            Label("备注", systemImage: "text.alignleft")
+                                .font(font(.headline, weight: .semibold))
+                            Text(task.notes)
+                                .font(font(.body))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(AppSpacing.cardContent)
+                        .background(preferences.pageBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+                        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -522,29 +652,77 @@ struct TasksHubView: View {
                     pendingDetailAction = .blueprint(task)
                     detailTask = nil
                 }
+                if task.needsAction {
+                    Menu {
+                        Button("标记完成", systemImage: "checkmark.circle") { store.markCompleted(task) }
+                            .disabled(blockReason != nil)
+                        if !task.isUnscheduled {
+                            Button("延期到明天", systemImage: "calendar.badge.clock") { store.postpone(task) }
+                        }
+                        Button("取消事项", systemImage: "xmark.circle") { store.cancel(task) }
+                    } label: {
+                        Label("更多操作", systemImage: "ellipsis.circle")
+                    }
+                    .fixedSize()
+                }
                 Spacer()
-                AppButton(title: "编辑事项", systemImage: "pencil", tint: preferences.accentColor) {
+                Button("编辑", systemImage: "pencil") {
                     pendingDetailAction = .edit(task)
                     detailTask = nil
+                }
+                if task.isCompleted || task.isCancelled {
+                    AppButton(title: "恢复事项", systemImage: "arrow.uturn.backward", tint: preferences.accentColor) {
+                        store.restore(task)
+                    }
+                } else if task.isUnscheduled {
+                    AppButton(title: "安排到今天", systemImage: "calendar.badge.plus", tint: preferences.accentColor) {
+                        store.scheduleToday(task)
+                    }
+                } else if !task.isInProgress {
+                    AppButton(title: "开始执行", systemImage: "play.fill", tint: preferences.accentColor) {
+                        store.start(task)
+                    }
+                    .disabled(blockReason != nil)
+                    .help(blockReason ?? "开始执行")
+                } else {
+                    AppButton(title: "完成事项", systemImage: "checkmark", tint: preferences.accentColor) {
+                        store.markCompleted(task)
+                    }
+                    .disabled(blockReason != nil)
+                    .help(blockReason ?? "完成事项")
                 }
             }
             .padding(AppSpacing.cardContent)
         }
-        .frame(minWidth: 480, idealWidth: 560, maxWidth: 680,
-               minHeight: 360, idealHeight: 480, maxHeight: 640)
+        .frame(width: 620, height: 560)
         .background(preferences.cardBackground)
         .tint(preferences.accentColor)
     }
 
-    private func detailField(_ title: String, value: String) -> some View {
-        GridRow(alignment: .top) {
-            Text(title).font(font(.callout)).foregroundStyle(.secondary)
-            Text(value).font(font(.body))
+    private func detailTile(_ title: String, value: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: AppSpacing.x2) {
+            Label(title, systemImage: symbol)
+                .font(font(.callout))
+                .foregroundStyle(AppColors.textSecondary)
+            Text(value)
+                .font(font(.body, weight: .medium))
                 .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(AppSpacing.cardContent)
+        .background(preferences.pageBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
         .accessibilityElement(children: .combine)
+    }
+
+    private func detailTone(for task: TaskItem) -> AppBadge.Tone {
+        switch task.effectiveStatus {
+        case .completed: .success
+        case .blocked: .danger
+        case .postponed: .warning
+        default: .neutral
+        }
     }
 
     private func performDetailAction() {
@@ -584,6 +762,8 @@ struct TasksHubView: View {
                     ForEach(group.rows) { row in
                         TaskCard(task: row.task, embedded: true,
                                  onSelect: onSelect,
+                                 onCompleteTask: completeWithSharedAnimation,
+                                 completionInProgress: completingOriginalTasks[row.id] != nil,
                                  onShowDetails: { detailTask = $0 })
                     }
                 }

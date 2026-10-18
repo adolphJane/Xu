@@ -22,6 +22,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
             && Set(reports.map(\.id)).count == reports.count
             && Set(anniversaries.map(\.id)).count == anniversaries.count
             && Set(weeklyReviews.map(\.id)).count == weeklyReviews.count
+            && TaskTreeProjection.validationError(in: tasks) == nil
     }
 }
 

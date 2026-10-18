@@ -633,14 +633,13 @@ final class TaskStore: ObservableObject {
         var updated = tasks
         updated.insert(task, at: 0)
         if let parentID = task.parentTaskID, !task.isCompleted {
-            let autoAncestors = Array(TaskTreeProjection.path(to: parentID, in: updated).reversed()
-                .prefix { $0.isCompleted && $0.autoCompletedAt != nil })
-            for ancestor in autoAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
+            let completedAncestors = TaskTreeProjection.path(to: parentID, in: updated).filter(\.isCompleted)
+            for ancestor in completedAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
                 actionMessage = "请先回退“\(ancestor.title)”的后续任务，再添加子任务。"
                 return
             }
             let changedAt = Date()
-            for ancestor in autoAncestors {
+            for ancestor in completedAncestors {
                 guard let index = updated.firstIndex(where: { $0.id == ancestor.id }) else { continue }
                 updated[index].status = .pending
                 updated[index].isComplete = false
@@ -725,11 +724,13 @@ final class TaskStore: ObservableObject {
             actionMessage = "子任务与父任务必须属于同一蓝图。"
             return false
         }
-        if previousBlueprintID != updated.blueprintID,
-           !TaskTreeProjection.descendants(of: updated.id, in: tasks).isEmpty {
-            actionMessage = "请先处理下级任务的蓝图归属，再移动这项任务。"
+        if let error = TaskTreeProjection.validationError(in: tasks.filter { $0.id != updated.id } + [updated]) {
+            actionMessage = error
             return false
         }
+        let movingTree = previousBlueprintID != updated.blueprintID
+            ? [previous] + TaskTreeProjection.descendants(of: updated.id, in: tasks)
+            : []
         if updated.workflowX == nil { updated.workflowX = previous.workflowX }
         if updated.workflowY == nil { updated.workflowY = previous.workflowY }
         if updated.workflowImages == nil { updated.workflowImages = previous.workflowImages }
@@ -738,15 +739,40 @@ final class TaskStore: ObservableObject {
             return false
         }
         if previousBlueprintID != task.blueprintID {
-            let successors = tasks.filter { $0.effectiveDependencyIDs.contains(task.id) }
-            if !successors.isEmpty {
-                actionMessage = "请先移除“\(successors.map(\.title).joined(separator: "、"))”的前置连线，再移动任务。"
+            let movingIDs = Set(movingTree.map(\.id))
+            guard task.blueprintID == nil || blueprints.contains(where: { $0.id == task.blueprintID }) else {
+                actionMessage = "目标蓝图不存在。"
                 return false
             }
-            updated.dependencyIDs = task.effectiveDependencyIDs.filter { dependencyID in
-                tasks.first { $0.id == dependencyID }?.blueprintID == task.blueprintID
+            let outsideEdges = tasks.filter { !movingIDs.contains($0.id) && !$0.effectiveDependencyIDs.filter(movingIDs.contains).isEmpty }
+            if !outsideEdges.isEmpty || (task.blueprintID == nil && movingTree.contains(where: { !$0.effectiveDependencyIDs.isEmpty })) {
+                actionMessage = "请先移除任务树与其他任务之间的前置连线，再移动或解除蓝图。"
+                return false
             }
-            if updated.dependencyIDs?.isEmpty == true { updated.dependencyIDs = nil }
+            var moved = movingTree.map { item -> TaskItem in
+                var value = item
+                value.blueprintID = task.blueprintID
+                if value.id == task.id {
+                    value = updated
+                    value.blueprintID = task.blueprintID
+                    if value.stageID.flatMap({ stageID in stages(for: task.blueprintID ?? UUID()).contains(where: { $0.id == stageID }) }) != true { value.stageID = nil }
+                    if value.milestoneID.flatMap({ milestoneID in milestones.contains(where: { $0.id == milestoneID && $0.blueprintID == task.blueprintID }) }) != true { value.milestoneID = nil }
+                } else {
+                    value.stageID = nil
+                    value.milestoneID = nil
+                }
+                return value
+            }
+            for item in moved {
+                if let error = WorkflowGraph.validationError(task: item, dependencies: item.effectiveDependencyIDs, tasks: tasks.filter { !movingIDs.contains($0.id) } + moved) {
+                    actionMessage = error
+                    return false
+                }
+            }
+            tasks.removeAll { movingIDs.contains($0.id) }
+            tasks.insert(contentsOf: moved, at: 0)
+            if let category = updated.category { addCategory(category) }
+            return true
         }
         if let error = WorkflowGraph.validationError(task: updated, dependencies: updated.effectiveDependencyIDs, tasks: tasks) {
             actionMessage = error
@@ -869,16 +895,15 @@ final class TaskStore: ObservableObject {
                 guard let completedAt = current.completedAt, current.autoCompletedAt == nil else { return false }
                 return $0.isCompleted && $0.autoCompletedAt == completedAt
             }
-            let autoAncestors = Array(TaskTreeProjection.path(to: current.id, in: tasks).dropLast().reversed()
-                .prefix { $0.isCompleted && $0.autoCompletedAt != nil })
-            let affected = Set(batchChildren.map(\.id)).union(autoAncestors.map(\.id)).union([current.id])
+            let completedAncestors = TaskTreeProjection.path(to: current.id, in: tasks).dropLast().filter(\.isCompleted)
+            let affected = Set(batchChildren.map(\.id)).union(completedAncestors.map(\.id)).union([current.id])
             let active = affected.flatMap { WorkflowGraph.descendants(of: $0, tasks: tasks) }
                 .filter { !affected.contains($0.id) && ($0.isInProgress || $0.isCompleted) }
             if !active.isEmpty {
                 actionMessage = "请先回退后续任务：\(active.map(\.title).joined(separator: "、"))。"
                 return
             }
-            if !batchChildren.isEmpty {
+            if affected.count > 1 {
                 var updated = tasks
                 let changedAt = Date()
                 for index in updated.indices where affected.contains(updated[index].id) {
@@ -898,8 +923,17 @@ final class TaskStore: ObservableObject {
 
     func rollbackWorkflow(from task: TaskItem) {
         guard let current = tasks.first(where: { $0.id == task.id }), current.isCompleted else { return }
-        let affected = Set(WorkflowGraph.descendants(of: task.id, tasks: tasks)
-            .filter { $0.isInProgress || $0.isCompleted }.map(\.id)).union([task.id])
+        var affected: Set<UUID> = [task.id]
+        var previousCount = 0
+        while previousCount != affected.count {
+            previousCount = affected.count
+            for id in Array(affected) {
+                affected.formUnion(WorkflowGraph.descendants(of: id, tasks: tasks)
+                    .filter { $0.isInProgress || $0.isCompleted }.map(\.id))
+                affected.formUnion(TaskTreeProjection.path(to: id, in: tasks).dropLast()
+                    .filter(\.isCompleted).map(\.id))
+            }
+        }
         var updated = tasks
         for index in updated.indices where affected.contains(updated[index].id) {
             updated[index].status = .pending
@@ -951,11 +985,9 @@ final class TaskStore: ObservableObject {
             actionMessage = reason
             return
         }
-        let autoAncestors = status == .completed ? [] : Array(
-            TaskTreeProjection.path(to: task.id, in: tasks).dropLast().reversed()
-                .prefix { $0.isCompleted && $0.autoCompletedAt != nil }
-        )
-        for ancestor in autoAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
+        let completedAncestors = status == .completed ? [] :
+            TaskTreeProjection.path(to: task.id, in: tasks).dropLast().filter(\.isCompleted)
+        for ancestor in completedAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
             actionMessage = "请先回退“\(ancestor.title)”的后续任务，再更改此任务状态。"
             return
         }
@@ -967,7 +999,7 @@ final class TaskStore: ObservableObject {
         updated[index].autoCompletedAt = nil
         updated[index].statusChangedAt = changedAt
         if status != .blocked { updated[index].blockReason = nil }
-        for ancestor in autoAncestors {
+        for ancestor in completedAncestors {
             guard let ancestorIndex = updated.firstIndex(where: { $0.id == ancestor.id }) else { continue }
             updated[ancestorIndex].status = .pending
             updated[ancestorIndex].isComplete = false
@@ -991,22 +1023,20 @@ final class TaskStore: ObservableObject {
     }
 
     func delete(_ task: TaskItem) {
-        let successors = tasks.filter { $0.effectiveDependencyIDs.contains(task.id) }
+        let removedIDs = Set([task.id] + TaskTreeProjection.descendants(of: task.id, in: tasks).map(\.id))
+        let successors = tasks.filter { !removedIDs.contains($0.id) && !$0.effectiveDependencyIDs.filter(removedIDs.contains).isEmpty }
         if !successors.isEmpty {
             actionMessage = "请先移除“\(successors.map(\.title).joined(separator: "、"))”的前置连线，再删除任务。"
             return
         }
-        var updated = tasks.filter { $0.id != task.id }
-        let replacementParentID = task.parentTaskID.flatMap { parentID in
-            updated.contains(where: { $0.id == parentID }) ? parentID : nil
-        }
+        var updated = tasks.filter { !removedIDs.contains($0.id) }
         for index in updated.indices {
-            updated[index].dependencyIDs?.removeAll { $0 == task.id }
+            updated[index].dependencyIDs?.removeAll { removedIDs.contains($0) }
             if updated[index].dependencyIDs?.isEmpty == true { updated[index].dependencyIDs = nil }
-            if updated[index].parentTaskID == task.id { updated[index].parentTaskID = replacementParentID }
+            if updated[index].parentTaskID.map(removedIDs.contains) == true { updated[index].parentTaskID = nil }
         }
         tasks = updated
-        for index in anniversaries.indices where anniversaries[index].generatedTaskID == task.id {
+        for index in anniversaries.indices where anniversaries[index].generatedTaskID.map(removedIDs.contains) == true {
             anniversaries[index].generatedTaskID = nil
         }
     }
@@ -1014,29 +1044,28 @@ final class TaskStore: ObservableObject {
     @discardableResult
     func removeWorkflowNode(_ task: TaskItem, reconnect: Bool) -> Bool {
         guard let current = tasks.first(where: { $0.id == task.id }) else { return false }
-        var updated = tasks.filter { $0.id != current.id }
-        let replacementParentID = current.parentTaskID.flatMap { parentID in
-            updated.contains(where: { $0.id == parentID }) ? parentID : nil
-        }
+        let removedIDs = Set([current.id] + TaskTreeProjection.descendants(of: current.id, in: tasks).map(\.id))
+        var updated = tasks.filter { !removedIDs.contains($0.id) }
         for index in updated.indices {
-            if updated[index].parentTaskID == current.id { updated[index].parentTaskID = replacementParentID }
-            guard updated[index].effectiveDependencyIDs.contains(current.id) else { continue }
-            var dependencies = updated[index].effectiveDependencyIDs.filter { $0 != current.id }
+            if updated[index].parentTaskID.map(removedIDs.contains) == true { updated[index].parentTaskID = nil }
+            guard !updated[index].effectiveDependencyIDs.filter(removedIDs.contains).isEmpty else { continue }
+            var dependencies = updated[index].effectiveDependencyIDs.filter { !removedIDs.contains($0) }
             if reconnect {
-                for predecessorID in current.effectiveDependencyIDs where !dependencies.contains(predecessorID) {
+                let predecessors = Set(removedIDs.flatMap { id in tasks.first(where: { $0.id == id })?.effectiveDependencyIDs ?? [] })
+                for predecessorID in predecessors where !removedIDs.contains(predecessorID) && !dependencies.contains(predecessorID) {
                     dependencies.append(predecessorID)
                 }
             }
             updated[index].dependencyIDs = dependencies.isEmpty ? nil : dependencies
         }
-        for successor in updated where tasks.contains(where: { $0.id == successor.id && $0.effectiveDependencyIDs.contains(current.id) }) {
+        for successor in updated where tasks.contains(where: { $0.id == successor.id && !$0.effectiveDependencyIDs.filter(removedIDs.contains).isEmpty }) {
             if let error = WorkflowGraph.validationError(task: successor, dependencies: successor.effectiveDependencyIDs, tasks: updated) {
                 actionMessage = error
                 return false
             }
         }
         tasks = updated
-        for index in anniversaries.indices where anniversaries[index].generatedTaskID == current.id {
+        for index in anniversaries.indices where anniversaries[index].generatedTaskID.map(removedIDs.contains) == true {
             anniversaries[index].generatedTaskID = nil
         }
         return true
@@ -1294,7 +1323,8 @@ final class TaskStore: ObservableObject {
         let importedIDs = Set(package.tasks.map(\.id))
         guard importedIDs.count == package.tasks.count,
               package.tasks.allSatisfy({ $0.blueprintID == package.blueprint.id
-                  && $0.effectiveDependencyIDs.allSatisfy(importedIDs.contains) }) else {
+                  && $0.effectiveDependencyIDs.allSatisfy(importedIDs.contains) }),
+              TaskTreeProjection.validationError(in: package.tasks) == nil else {
             throw NSError(domain: "序蓝图", code: 3, userInfo: [NSLocalizedDescriptionKey: "导入文件的任务或前置连线无效，未写入任何数据。"])
         }
         for task in package.tasks {

@@ -2,6 +2,23 @@ import XCTest
 @testable import Quadrant
 
 final class TaskSeriesProjectionTests: XCTestCase {
+    func testScopeFollowsRootStatusForEverySeriesMember() {
+        let root = TaskItem(title: "主任务", quadrant: .schedule)
+        let completed = TaskItem(title: "已完成子任务", quadrant: .doNow,
+                                 status: .completed, parentTaskID: root.id)
+        let pending = TaskItem(title: "待完成子任务", quadrant: .schedule, parentTaskID: root.id)
+        let activeTasks = [root, completed, pending]
+
+        XCTAssertTrue(activeTasks.allSatisfy { TasksScope.active.includes($0, in: activeTasks) })
+        XCTAssertTrue(activeTasks.allSatisfy { !TasksScope.processed.includes($0, in: activeTasks) })
+
+        var finishedRoot = root
+        finishedRoot.status = .completed
+        let finishedTasks = [finishedRoot, completed, pending]
+        XCTAssertTrue(finishedTasks.allSatisfy { TasksScope.processed.includes($0, in: finishedTasks) })
+        XCTAssertTrue(finishedTasks.allSatisfy { !TasksScope.active.includes($0, in: finishedTasks) })
+    }
+
     func testFilteredChildKeepsItsSeriesAndParentIsOnlyContext() {
         let root = TaskItem(title: "主任务", quadrant: .schedule)
         let child = TaskItem(title: "命中的子任务", quadrant: .doNow, parentTaskID: root.id)

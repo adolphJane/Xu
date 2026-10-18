@@ -757,12 +757,13 @@ struct TaskCard: View {
     @State private var isAddingChild = false
     @State private var isConfirmingDelete = false
     @State private var isHovered = false
-    @State private var isShowingCompletionFeedback = false
     let task: TaskItem
     var compact = false
     var embedded = false
     let onSelect: (TaskItem) -> Void
     var onEditTask: ((TaskItem) -> Void)? = nil
+    var onCompleteTask: ((TaskItem) -> Void)? = nil
+    var completionInProgress = false
     var onShowDetails: ((TaskItem) -> Void)? = nil
 
     private var childTasks: [TaskItem] { store.tasks.filter { $0.parentTaskID == task.id } }
@@ -770,24 +771,23 @@ struct TaskCard: View {
     var body: some View {
         HStack(spacing: 12) {
             Button { primaryAction() } label: {
-                Image(systemName: embedded && (isShowingCompletionFeedback || task.isCompleted)
+                Image(systemName: embedded && task.isCompleted
                       ? "checkmark.circle.fill" : embedded && task.needsAction ? "circle" : statusIcon)
                     .font(.title3)
-                    .foregroundStyle(isShowingCompletionFeedback ? AppColors.success : statusColor)
+                    .foregroundStyle(statusColor)
                     .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: isShowingCompletionFeedback)
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
-            }.buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
+            }.buttonStyle(.plain)
                 .offset(y: embedded ? -AppSpacing.x2 : 0)
-                .disabled(isShowingCompletionFeedback || (!task.isCompleted && store.executionBlockReason(for: task) != nil))
-                .help(isShowingCompletionFeedback ? "已完成" : task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
-                .accessibilityLabel(isShowingCompletionFeedback ? "\(task.title)已完成" : task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
+                .disabled(completionInProgress || (!task.isCompleted && store.executionBlockReason(for: task) != nil))
+                .help(task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
+                .accessibilityLabel(task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
                     if task.parentTaskID != nil && !embedded { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
                     if task.planLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
-                    Text(task.title).strikethrough(isShowingCompletionFeedback || task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
+                    Text(task.title).strikethrough(task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
                         .font(embedded ? AppTypography.desktop(.body, scale: preferences.fontScale,
                                                               weight: .semibold, design: preferences.fontStyle.design) : nil)
                 }
@@ -797,7 +797,7 @@ struct TaskCard: View {
                         .foregroundStyle(.secondary)
                 }
                 if embedded {
-                    Text(isShowingCompletionFeedback ? "已完成" : task.displayStatusTitle)
+                    Text(task.displayStatusTitle)
                     .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
                                                 design: preferences.fontStyle.design))
                     .foregroundStyle(statusColor)
@@ -882,7 +882,7 @@ struct TaskCard: View {
                         .disabled(store.executionBlockReason(for: task) != nil)
                 }
                 if !task.isCompleted {
-                    Button("标记为已完成", systemImage: "checkmark.circle") { store.markCompleted(task) }
+                    Button("标记为已完成", systemImage: "checkmark.circle") { complete(task) }
                         .disabled(store.executionBlockReason(for: task) != nil)
                 }
                 if task.needsAction && !task.isUnscheduled {
@@ -915,7 +915,7 @@ struct TaskCard: View {
                 }
                 Divider()
                 Button("删除", role: .destructive) {
-                    if childTasks.isEmpty { store.delete(task) }
+                    if TaskTreeProjection.descendants(of: task.id, in: store.tasks).isEmpty { store.delete(task) }
                     else { isConfirmingDelete = true }
                 }
             } label: {
@@ -951,11 +951,12 @@ struct TaskCard: View {
         .onTapGesture { onSelect(task) }
         .appDialog(isPresented: $isBlocking) { BlockTaskEditor(task: task) }
         .appDialog(isPresented: $isAddingChild) { TaskChildQuickAddView(parentTaskID: task.id) }
-        .confirmationDialog("删除“\(task.title)”？", isPresented: $isConfirmingDelete) {
+        .confirmationDialog("删除“\(task.title)”及其后代？", isPresented: $isConfirmingDelete) {
             Button("删除任务", role: .destructive) { store.delete(task) }
             Button("取消", role: .cancel) { }
         } message: {
-            Text("\(childTasks.count) 项直接子任务会归属到上一层，子任务自身的下级结构会保留。")
+            let count = TaskTreeProjection.descendants(of: task.id, in: store.tasks).count
+            Text(count == 0 ? "此操作无法撤销。" : "该任务及全部 \(count) 项后代任务都会删除。")
         }
     }
 
@@ -988,22 +989,11 @@ struct TaskCard: View {
     }
 
     private func primaryAction() {
-        if embedded && !task.isCompleted && !preferences.reduceMotion && !systemReduceMotion {
-            guard !isShowingCompletionFeedback else { return }
-            withAnimation(AppTheme.springAnimation) {
-                isShowingCompletionFeedback = true
-            }
-            Task { @MainActor in
-                do { try await Task.sleep(for: .milliseconds(350)) }
-                catch { isShowingCompletionFeedback = false; return }
-                defer { isShowingCompletionFeedback = false }
-                guard let current = store.tasks.first(where: { $0.id == task.id }),
-                      current.effectiveStatus == task.effectiveStatus else { return }
-                store.markCompleted(current)
-            }
-            return
-        }
-        if task.isCompleted { store.restore(task) } else { store.markCompleted(task) }
+        if task.isCompleted { store.restore(task) } else { complete(task) }
+    }
+
+    private func complete(_ task: TaskItem) {
+        if let onCompleteTask { onCompleteTask(task) } else { store.markCompleted(task) }
     }
 
     private func secondaryAction() {

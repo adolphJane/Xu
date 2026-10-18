@@ -102,7 +102,7 @@ final class AppDialogPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) { onCancel?() }
     override func performClose(_ sender: Any?) { onCancel?() }
 
-    func animate(visible: Bool, reduceMotion: Bool, completion: @escaping () -> Void) {
+    func animate(visible: Bool, reduceMotion: Bool, completion: @escaping @MainActor @Sendable () -> Void) {
         guard !reduceMotion else { alphaValue = visible ? 1 : 0; completion(); return }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = visible ? AppTheme.dialogEnterDuration : AppTheme.composerExitDuration

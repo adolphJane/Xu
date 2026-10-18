@@ -97,7 +97,7 @@ struct TaskCategoriesView: View {
         }
         .appDialog(item: $blockingTask) { task in BlockTaskEditor(task: task) }
         .appDialog(item: $addingChildTask) { task in TaskChildQuickAddView(parentTaskID: task.id) }
-        .confirmationDialog("删除任务？", isPresented: Binding(
+        .confirmationDialog("删除任务及其后代？", isPresented: Binding(
             get: { deletingTask != nil },
             set: { if !$0 { deletingTask = nil } }
         )) {
@@ -108,8 +108,8 @@ struct TaskCategoriesView: View {
             Button("取消", role: .cancel) { deletingTask = nil }
         } message: {
             if let deletingTask {
-                let count = TaskTreeProjection.directChildren(of: deletingTask.id, in: store.tasks).count
-                Text("\(count) 项直接子任务会归属到上一层，子任务自身的下级结构会保留。")
+                let count = TaskTreeProjection.descendants(of: deletingTask.id, in: store.tasks).count
+                Text(count == 0 ? "此操作无法撤销。" : "该任务及全部 \(count) 项后代任务都会删除。")
             }
         }
         .appDialog(isPresented: $isRenaming) {
@@ -454,7 +454,7 @@ struct TaskCategoriesView: View {
                     Button("编辑任务") { onSelect(task) }
                     Button("添加子任务") { addingChildTask = task }
                     Button("删除", role: .destructive) {
-                        if TaskTreeProjection.directChildren(of: task.id, in: store.tasks).isEmpty { store.delete(task) }
+                        if TaskTreeProjection.descendants(of: task.id, in: store.tasks).isEmpty { store.delete(task) }
                         else { deletingTask = task }
                     }
                 } label: {

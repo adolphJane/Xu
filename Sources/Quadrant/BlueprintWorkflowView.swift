@@ -834,7 +834,8 @@ private struct WorkflowInspector: View {
                 }
             }
         } message: {
-            Text("节点对应的任务也会删除；它的直接子任务会归属到上一层，后续节点按所选方式更新依赖。")
+            let count = TaskTreeProjection.descendants(of: task.id, in: store.tasks).count
+            Text("节点对应的任务及其全部 \(count) 项后代任务都会删除，后续节点按所选方式更新依赖。")
         }
     }
 

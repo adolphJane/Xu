@@ -1,6 +1,6 @@
 # 项目协作约束
 
-本文件适用于整个仓库。项目包含 macOS 14+ SwiftUI 应用（Swift Package Manager 构建）和 iOS/iPadOS 17+ 应用目标（`iOS/SequenceIOS.xcodeproj`）；任务数据由 SwiftData 持久化。
+本文件适用于整个仓库。当前开发范围仅为 macOS 14+ SwiftUI 应用（Swift Package Manager 构建），任务数据由 SwiftData 持久化。仓库仍保留 `iOS/SequenceIOS.xcodeproj`，但日常开发不修改、不验证 iOS 应用逻辑；只有用户明确提出 iOS 工作时才纳入范围。
 
 ## 当前迭代优先级
 
@@ -32,7 +32,7 @@
 - 页面按钮遵循 `docs/design-system/components.md` 的 `compact` / `regular` / `prominent` 尺寸与主要/次要层级；不要在 `AppButton` 内叠加系统按钮样式、重复设置高度或在业务页面另写按钮边距。工具栏、表单和菜单的系统按钮保持平台默认交互。
 - **macOS 业务弹窗统一使用添加事项的弹窗方式**：详情、编辑、创建、选择、预览等入口使用统一的 `appDialog` / `AppDialogPanel`，复用透明 `NSPanel`、居中遮罩、圆角表面、淡入放大与缩小淡出、Reduce Motion 和焦点恢复；添加事项的预加载面板也必须使用相同底层实现。业务页不得直接新增 `.sheet`、`.popover`、旧 `clickAwaySheet` / `clickAwayPopover` 或独立窗口动画实现。关闭通过 `@AppDismiss` 或呈现绑定处理，外侧点击与 Escape 通过 `onAppDialogCancel` 复用表单的未保存确认；嵌套弹窗只关闭最上层，退场结束后再执行 `onDismiss` / 后续导航。系统错误提示、危险操作确认、文件选择及系统授权继续使用原生 alert、confirmationDialog 和系统面板；iOS/iPadOS 保留原生 sheet，不套用 macOS 面板。
 - 同时支持浅色与深色、Dynamic Type/文字放大、VoiceOver、合理点击区域、长中文和 Reduce Motion；状态不能只靠颜色表达。迁移页面至少检查空态、有数据状态和主要操作。
-- macOS 保留 `AppPreferences` 的主题、密度和字号偏好，以及现有侧边栏和窗口交互；iOS/iPadOS 17+ 使用 Asset Catalog 的浅/深色资源、系统 `NavigationStack`、`Form`、sheet 和 Safe Area。两个目标的 UI 要分别编译验证，不假定一端通过即代表另一端通过。
+- UI 修改只面向 macOS，保留 `AppPreferences` 的主题、密度和字号偏好，以及现有侧边栏和窗口交互。默认只验证 macOS 目标，不要求检查或编译 iOS 目标。
 - 逐页迁移，不一次性重写应用；只替换呈现层，不改任务模型、SwiftData、API、备份格式和既有操作语义。每迁移一页，在 `docs/design-system/rollout.md` 记录范围、组件映射和验证结果。
-- 保持视觉层级、间距、状态和交互一致；无明确原因不引入第三方 UI 框架，不随意修改全局设计规范。确需修改 token 或组件 API 时，先检查两平台调用处及现有主题。
+- 保持视觉层级、间距、状态和交互一致；无明确原因不引入第三方 UI 框架，不随意修改全局设计规范。确需修改 token 或组件 API 时，先检查 macOS 调用处及现有主题。
 - 新增组件时同步更新 `components.md`、`DesignSystemGallery.swift` 和 SwiftUI Preview；Gallery 只用于预览，不进入正式业务导航。

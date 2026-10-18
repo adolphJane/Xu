@@ -148,6 +148,22 @@ enum TaskTreeProjection {
         return !descendants(of: taskID, in: tasks).contains { $0.id == parentID }
     }
 
+    /// Rejects orphaned parents, self-parenting, and cycles in imported task trees.
+    static func validationError(in tasks: [TaskItem]) -> String? {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for task in tasks {
+            guard let parentID = task.parentTaskID else { continue }
+            guard parentID != task.id, byID[parentID] != nil else { return "任务父级关系无效。" }
+            var current: UUID? = parentID
+            var visited: Set<UUID> = [task.id]
+            while let id = current {
+                guard visited.insert(id).inserted else { return "任务父级关系存在循环。" }
+                current = byID[id]?.parentTaskID
+            }
+        }
+        return nil
+    }
+
     /// Finds the topmost existing parent; broken links and cycles stay navigable.
     static func rootID(containing taskID: UUID, in tasks: [TaskItem]) -> UUID {
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

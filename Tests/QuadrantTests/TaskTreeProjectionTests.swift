@@ -62,7 +62,7 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertEqual(TaskTreeProjection.path(to: grandchild.id, in: store.tasks).map(\.id), [root.id, second.id, first.id, grandchild.id])
     }
 
-    func testDeletingMiddleTaskPromotesItsChildrenWithoutLosingGrandchildren() throws {
+    func testDeletingMiddleTaskRemovesItsDescendants() throws {
         let store = TaskStore(inMemory: true)
         let root = TaskItem(title: "主任务", quadrant: .schedule)
         store.add(root)
@@ -74,9 +74,36 @@ final class TaskTreeProjectionTests: XCTestCase {
         let grandchild = try XCTUnwrap(TaskTreeProjection.directChildren(of: child.id, in: store.tasks).first)
 
         store.delete(middle)
-        XCTAssertEqual(store.tasks.first(where: { $0.id == child.id })?.parentTaskID, root.id)
-        XCTAssertEqual(store.tasks.first(where: { $0.id == grandchild.id })?.parentTaskID, child.id)
-        XCTAssertEqual(TaskTreeProjection.descendants(of: root.id, in: store.tasks).map(\.title), ["执行", "校验"])
+        XCTAssertFalse(store.tasks.contains { [middle.id, child.id, grandchild.id].contains($0.id) })
+        XCTAssertTrue(store.tasks.contains { $0.id == root.id })
+        XCTAssertTrue(TaskTreeProjection.descendants(of: root.id, in: store.tasks).isEmpty)
+    }
+
+    func testDeletingParentRemovesAllDescendants() throws {
+        let store = TaskStore(inMemory: true)
+        let root = TaskItem(title: "主任务", quadrant: .schedule)
+        store.add(root)
+        XCTAssertTrue(store.addChild(title: "阶段", to: root.id))
+        let child = try XCTUnwrap(TaskTreeProjection.directChildren(of: root.id, in: store.tasks).first)
+        XCTAssertTrue(store.addChild(title: "执行", to: child.id))
+
+        store.delete(root)
+
+        XCTAssertTrue(store.tasks.isEmpty)
+    }
+
+    func testSnapshotRejectsBrokenParentLinksAndCycles() {
+        let parentID = UUID()
+        let orphan = TaskItem(title: "孤儿", quadrant: .schedule, parentTaskID: parentID)
+        XCTAssertNotNil(TaskTreeProjection.validationError(in: [orphan]))
+
+        let first = TaskItem(title: "甲", quadrant: .schedule)
+        var second = TaskItem(title: "乙", quadrant: .schedule, parentTaskID: first.id)
+        var cyclicFirst = first
+        cyclicFirst.parentTaskID = second.id
+        XCTAssertNotNil(TaskTreeProjection.validationError(in: [cyclicFirst, second]))
+        second.parentTaskID = first.id
+        XCTAssertNil(TaskTreeProjection.validationError(in: [first, second]))
     }
 
     func testNestedTreeSurvivesSwiftDataAndLegacyJSONRoundTrip() throws {
@@ -162,12 +189,13 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertEqual(store.tasks.first { $0.id == previouslyCompleted.id }?.completedAt, originalDate)
     }
 
-    func testRestoringAutomaticallyCompletedParentKeepsCompletedChildren() {
+    func testRestoringParentKeepsPreviouslyCompletedChildren() {
         let store = TaskStore(inMemory: true)
         let parent = TaskItem(title: "主任务", quadrant: .schedule)
         let child = TaskItem(title: "子任务", quadrant: .schedule, parentTaskID: parent.id)
         [parent, child].forEach(store.add)
         store.markCompleted(child)
+        store.markCompleted(parent)
 
         store.restore(parent)
 
@@ -175,13 +203,14 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertTrue(store.tasks.first { $0.id == child.id }?.isCompleted == true)
     }
 
-    func testRestoringParentBatchAlsoReopensAutomaticallyCompletedAncestor() {
+    func testRestoringParentBatchAlsoReopensCompletedAncestor() {
         let store = TaskStore(inMemory: true)
         let root = TaskItem(title: "总任务", quadrant: .schedule)
         let parent = TaskItem(title: "阶段", quadrant: .schedule, parentTaskID: root.id)
         let child = TaskItem(title: "步骤", quadrant: .schedule, parentTaskID: parent.id)
         [root, parent, child].forEach(store.add)
         store.markCompleted(parent)
+        store.markCompleted(root)
         XCTAssertTrue(store.tasks.first { $0.id == root.id }?.isCompleted == true)
 
         store.restore(parent)
@@ -218,7 +247,7 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertTrue(store.actionMessage?.contains("等待验收") == true)
     }
 
-    func testLastCompletedChildAutomaticallyCompletesAncestorsAndRestoringReopensThem() throws {
+    func testCompletingAllChildrenAutomaticallyCompletesAncestorsAndRestoringChildReopensThem() throws {
         let store = TaskStore(inMemory: true)
         let root = TaskItem(title: "主任务", quadrant: .schedule)
         let branch = TaskItem(title: "阶段", quadrant: .schedule, parentTaskID: root.id)
@@ -236,6 +265,8 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertTrue(completedRoot.isCompleted)
         XCTAssertNotNil(completedRoot.autoCompletedAt)
         XCTAssertEqual(completedRoot.displayStatusTitle, "自动完成")
+        XCTAssertTrue(TasksScope.processed.includes(leaf, in: store.tasks))
+        XCTAssertFalse(TasksScope.active.includes(leaf, in: store.tasks))
 
         let persistence = try PersistenceController(inMemory: true)
         try persistence.saveTasks(store.tasks)
@@ -250,9 +281,23 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertFalse(store.tasks.first { $0.id == root.id }?.isCompleted == true)
         XCTAssertNil(store.tasks.first { $0.id == root.id }?.autoCompletedAt)
         XCTAssertTrue(store.tasks.first { $0.id == sibling.id }?.isCompleted == true)
+        XCTAssertTrue(TasksScope.active.includes(leaf, in: store.tasks))
     }
 
-    func testBlockedParentDoesNotAutomaticallyCompleteAfterLastChild() {
+    func testWorkflowRollbackOfChildReopensCompletedParent() {
+        let store = TaskStore(inMemory: true)
+        let parent = TaskItem(title: "主任务", quadrant: .schedule)
+        let child = TaskItem(title: "子任务", quadrant: .schedule, parentTaskID: parent.id)
+        [parent, child].forEach(store.add)
+        store.markCompleted(parent)
+
+        store.rollbackWorkflow(from: child)
+
+        XCTAssertTrue(store.tasks.first { $0.id == child.id }?.isPending == true)
+        XCTAssertTrue(store.tasks.first { $0.id == parent.id }?.isPending == true)
+    }
+
+    func testBlockedParentDoesNotCompleteAfterLastChild() {
         let store = TaskStore(inMemory: true)
         let root = TaskItem(title: "主任务", quadrant: .schedule)
         let child = TaskItem(title: "子任务", quadrant: .schedule, parentTaskID: root.id)
@@ -263,16 +308,16 @@ final class TaskTreeProjectionTests: XCTestCase {
 
         XCTAssertTrue(store.tasks.first { $0.id == child.id }?.isCompleted == true)
         XCTAssertFalse(store.tasks.first { $0.id == root.id }?.isCompleted == true)
-        XCTAssertTrue(store.actionMessage?.contains("等待审批") == true)
+        XCTAssertEqual(store.tasks.first { $0.id == root.id }?.effectiveStatus, .blocked)
     }
 
-    func testAddingChildReopensAutomaticallyCompletedParent() throws {
+    func testAddingChildReopensCompletedParent() throws {
         let store = TaskStore(inMemory: true)
         let parent = TaskItem(title: "主任务", quadrant: .schedule)
         let child = TaskItem(title: "原子任务", quadrant: .schedule, parentTaskID: parent.id)
         [parent, child].forEach(store.add)
         store.markCompleted(child)
-        XCTAssertNotNil(store.tasks.first { $0.id == parent.id }?.autoCompletedAt)
+        store.markCompleted(parent)
 
         XCTAssertTrue(store.addChild(title: "新增子任务", to: parent.id))
         let reopened = try XCTUnwrap(store.tasks.first { $0.id == parent.id })
@@ -282,7 +327,7 @@ final class TaskTreeProjectionTests: XCTestCase {
         XCTAssertEqual(TaskTreeProjection.directChildren(of: parent.id, in: store.tasks).count, 2)
     }
 
-    func testExistingCompletedChildrenReconcilePendingParentsWithoutRelabelingManualCompletion() {
+    func testExistingCompletedChildrenReconcilePendingParents() {
         let store = TaskStore(inMemory: true)
         let root = TaskItem(title: "旧版待完成父任务", quadrant: .schedule)
         let child = TaskItem(title: "旧版已完成子任务", quadrant: .schedule, status: .completed, parentTaskID: root.id)
