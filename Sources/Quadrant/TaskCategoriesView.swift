@@ -65,6 +65,8 @@ struct TaskCategoriesView: View {
     @State private var isDeleting = false
     @State private var isAddingTask = false
     @State private var blockingTask: TaskItem?
+    @State private var addingChildTask: TaskItem?
+    @State private var deletingTask: TaskItem?
 
     private var selectedTasks: [TaskItem] { store.tasks.filter { selection.includes($0) } }
     private var visibleTasks: [TaskItem] {
@@ -90,20 +92,33 @@ struct TaskCategoriesView: View {
             .padding(AppSpacing.x8)
             .frame(maxWidth: .infinity)
         }
-        .clickAwayPopover(isPresented: $isAddingTask) { request, close in
-            TaskComposerView(category: selection.categoryName, cancelRequest: request, onClose: close)
+        .appDialog(isPresented: $isAddingTask) {
+            TaskComposerView(category: selection.categoryName)
         }
-        .sheet(item: $blockingTask) { task in BlockTaskEditor(task: task) }
-        .alert("重命名类别", isPresented: $isRenaming) {
-            TextField("类别名称", text: $renameValue)
-            Button("取消", role: .cancel) {}
-            Button("保存") {
-                guard let oldName = selection.categoryName else { return }
-                if store.renameCategory(oldName, to: renameValue) {
-                    selection = .named(renameValue.trimmingCharacters(in: .whitespacesAndNewlines))
-                } else {
-                    store.actionMessage = "类别名称不能为空或与现有类别重复。"
-                }
+        .appDialog(item: $blockingTask) { task in BlockTaskEditor(task: task) }
+        .appDialog(item: $addingChildTask) { task in TaskChildQuickAddView(parentTaskID: task.id) }
+        .confirmationDialog("删除任务？", isPresented: Binding(
+            get: { deletingTask != nil },
+            set: { if !$0 { deletingTask = nil } }
+        )) {
+            Button("删除任务", role: .destructive) {
+                if let deletingTask { store.delete(deletingTask) }
+                deletingTask = nil
+            }
+            Button("取消", role: .cancel) { deletingTask = nil }
+        } message: {
+            if let deletingTask {
+                let count = TaskTreeProjection.directChildren(of: deletingTask.id, in: store.tasks).count
+                Text("\(count) 项直接子任务会归属到上一层，子任务自身的下级结构会保留。")
+            }
+        }
+        .appDialog(isPresented: $isRenaming) {
+            AppTextInputDialog(title: "重命名类别", message: "更新类别名称，所属事项将同步使用新名称。",
+                               prompt: "类别名称", text: $renameValue) { value in
+                guard let oldName = selection.categoryName else { return "请选择需要重命名的类别。" }
+                guard store.renameCategory(oldName, to: value) else { return "类别名称不能为空或与现有类别重复。" }
+                selection = .named(value)
+                return nil
             }
         }
         .confirmationDialog("删除类别后，所属任务会变为未分类。", isPresented: $isDeleting) {
@@ -369,7 +384,7 @@ struct TaskCategoriesView: View {
                             } icon: { Image(systemName: "calendar") }
                         }
                         if task.projectName != "未归类项目" { Text("· \(task.projectName)") }
-                        if !task.isPending { Text("· \(task.effectiveStatus.title)") }
+                        if !task.isPending { Text("· \(task.displayStatusTitle)") }
                     }
                     .font(AppTypography.caption)
                     .foregroundStyle(AppColors.textSecondary)
@@ -381,7 +396,7 @@ struct TaskCategoriesView: View {
             }
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .topLeading)
-            .accessibilityLabel("查看\(task.title)，\(task.effectiveStatus.title)")
+            .accessibilityLabel("查看\(task.title)，\(task.displayStatusTitle)")
             HStack(alignment: .center, spacing: AppSpacing.x3) {
                 if selection == .all {
                     Text(task.categoryName)
@@ -436,8 +451,12 @@ struct TaskCategoriesView: View {
                         Button("移至\(quadrant.title)") { store.move(task, to: quadrant) }
                     }
                     Divider()
-                    Button("打开任务详情") { onSelect(task) }
-                    Button("删除", role: .destructive) { store.delete(task) }
+                    Button("编辑任务") { onSelect(task) }
+                    Button("添加子任务") { addingChildTask = task }
+                    Button("删除", role: .destructive) {
+                        if TaskTreeProjection.directChildren(of: task.id, in: store.tasks).isEmpty { store.delete(task) }
+                        else { deletingTask = task }
+                    }
                 } label: {
                     Image(systemName: "ellipsis").frame(width: 36, height: 36).contentShape(Rectangle())
                 }

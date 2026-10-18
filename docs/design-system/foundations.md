@@ -22,13 +22,15 @@ iOS 颜色由 `Colors.xcassets` 的 Any/Dark 变体提供，采用与分类设�
 
 `AppTypography` 提供 Large Title、Title、Headline、Body、Callout、Caption 语义角色。优先系统字体、系统字重，不固定行高。iOS 用系统 Dynamic Type 自动缩放；布局允许纵向增长，非必要不截断主要信息。macOS 保留现有字体偏好，但新页面采用角色样式，不新增一套固定字号。数字进度可使用 `monospacedDigit()`。
 
+macOS 需要应用用户字号与字体偏好时，使用 `AppTypography.desktop(_:scale:weight:design:)`。它从 AppKit 的系统文字角色读取基准大小，再应用用户的缩放与字体设计；「今日」页已接入此 API。iOS 继续使用现有系统语义字体与 Dynamic Type。
+
 ## 间距与形状
 
 4pt 基础序列：4、8、12、16、20、24、28、32pt，对应 `AppSpacing.x1` 至 `x8`。页面水平边距使用 `AppSpacing.page`（20pt），卡片内部使用 `cardContent`（16pt），区域之间使用 `section`（24pt），列表卡片之间使用 `list`（12pt）。`AppRadius`：8pt 小元素、12pt 控件、16pt 卡片、20pt 重点容器。边框使用语义 `border`；阴影只用于需要层级的卡片，使用 `AppShadows`，深色外观下卡片通过表面和边框区分层级。
 
 ## 动效
 
-轻微状态切换可用约 0.22 秒 easeInOut；连续交互可用约 0.35 秒弹簧。优先系统转场；加载用 `ProgressView`，保存/错误用清楚的文字反馈。读取 `accessibilityReduceMotion`，减少动态效果时移除非必要动画，保留状态提示。
+轻微状态切换可用约 0.22 秒 easeInOut；连续交互可用约 0.35 秒弹簧。优先系统转场；加载用 `ProgressView`，保存/错误用清楚的文字反馈。读取 `accessibilityReduceMotion`，减少动态效果时移除非必要动画，保留状态提示。添加事项使用 `AppTheme.composerEnterAnimation` 的轻柔弹簧放大与渐入，`composerExitAnimation` 的短促缩小与渐出；比例分别由 `composerInitialScale` / `composerDismissedScale` 管理。叠加弹窗的固定轮廓阴影使用 `AppShadows.modalColor` / `modalRadius` / `modalOffset`。
 
 ## 布局与导航
 

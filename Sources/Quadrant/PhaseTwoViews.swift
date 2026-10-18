@@ -100,9 +100,9 @@ struct AnniversariesView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(30)
         }
-        .sheet(isPresented: $isAdding) { AnniversaryEditor() }
-        .sheet(item: $editing) { AnniversaryEditor(item: $0) }
-        .sheet(item: $preparationCandidate) { PreparationTaskPreview(anniversary: $0) }
+        .appDialog(isPresented: $isAdding) { AnniversaryEditor() }
+        .appDialog(item: $editing) { AnniversaryEditor(item: $0) }
+        .appDialog(item: $preparationCandidate) { PreparationTaskPreview(anniversary: $0) }
     }
 }
 
@@ -158,7 +158,7 @@ struct AnniversaryCard: View {
 }
 
 struct AnniversaryEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     private let original: AnniversaryItem?
     @State private var name: String
@@ -273,7 +273,7 @@ struct AnniversaryEditor: View {
 }
 
 struct PreparationTaskPreview: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let anniversary: AnniversaryItem
 
@@ -380,7 +380,7 @@ struct BlueprintScheduleView: View {
                                 Circle().fill(task.quadrant.tint).frame(width: 7, height: 7)
                                 Text(task.title)
                                 Spacer()
-                                Text(task.effectiveStatus.title).font(.caption).foregroundStyle(.secondary)
+                                Text(task.displayStatusTitle).font(.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 3)
                         }
                     }
@@ -393,7 +393,7 @@ struct BlueprintScheduleView: View {
 }
 
 struct ReschedulePreviewView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprintID: UUID
     @State private var days = 1
@@ -422,7 +422,7 @@ struct ReschedulePreviewView: View {
 }
 
 struct BlueprintTemplatePicker: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
 
     var body: some View {
@@ -449,7 +449,7 @@ struct BlueprintTemplatePicker: View {
 }
 
 struct WeeklyReviewEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @State private var summary = ""
     @State private var nextWeekFocus = ""
@@ -489,9 +489,14 @@ struct ThemeSettingsView: View {
                     Picker("皮肤", selection: $preferences.themePreset) {
                         ForEach(ThemePreset.allCases) { Text($0.rawValue).tag($0) }
                     }
-                    TextField("自定义强调色（HEX，可选）", text: $preferences.customAccentHex)
-                    TextField("自定义页面色（HEX，可选）", text: $preferences.customBackgroundHex)
-                    TextField("自定义卡片色（HEX，可选）", text: $preferences.customCardHex)
+                }
+                Section("自定义颜色") {
+                    Text("在右侧输入 HEX 色值，例如 #D8A87C。留空时使用当前预置皮肤的颜色。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    customColorRow(title: "强调色", value: $preferences.customAccentHex, color: preferences.accentColor)
+                    customColorRow(title: "页面背景", value: $preferences.customBackgroundHex, color: preferences.pageBackground)
+                    customColorRow(title: "卡片背景", value: $preferences.customCardHex, color: preferences.cardBackground)
                 }
                 Section("自动切换") {
                     Picker("切换规则", selection: $preferences.automaticThemeRule) {
@@ -570,6 +575,30 @@ struct ThemeSettingsView: View {
             .background(preferences.pageBackground, in: RoundedRectangle(cornerRadius: 18))
         }
         .alert("主题", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) { Button("知道了") { message = nil } } message: { Text(message ?? "") }
+    }
+
+    private func customColorRow(title: String, value: Binding<String>, color: Color) -> some View {
+        HStack(spacing: AppSpacing.x3) {
+            RoundedRectangle(cornerRadius: AppRadius.small)
+                .fill(color)
+                .frame(width: 20, height: 20)
+                .overlay {
+                    RoundedRectangle(cornerRadius: AppRadius.small)
+                        .strokeBorder(.primary.opacity(0.14), lineWidth: 1)
+                }
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: AppSpacing.x1) {
+                Text(title)
+                Text(value.wrappedValue.isEmpty ? "跟随预置皮肤" : "#\(value.wrappedValue.trimmingCharacters(in: CharacterSet(charactersIn: "#")).uppercased())")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: AppSpacing.x2)
+            TextField("HEX", text: value)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 118)
+                .accessibilityLabel("\(title) HEX 色值")
+        }
     }
 
     private func chooseBackground() {

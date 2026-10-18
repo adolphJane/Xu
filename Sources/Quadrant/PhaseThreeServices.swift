@@ -316,20 +316,3 @@ final class CalendarIntegration: @unchecked Sendable {
         try store.save(event, span: .thisEvent, commit: true)
     }
 }
-
-extension AppPreferences {
-    func checkForUpdates(currentVersion: String = "0.4.0") async {
-        guard let url = URL(string: updateManifestURL), !updateManifestURL.isEmpty else {
-            updateStatus = "请先填写更新清单地址。"; return
-        }
-        isCheckingUpdate = true; defer { isCheckingUpdate = false }
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-            let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)
-            if manifest.version.compare(currentVersion, options: .numeric) == .orderedDescending {
-                availableUpdate = manifest; updateStatus = "发现新版本 \(manifest.version)。"
-            } else { availableUpdate = nil; updateStatus = "当前已是最新版本。" }
-        } catch { updateStatus = "检查更新失败：\(error.localizedDescription)" }
-    }
-}

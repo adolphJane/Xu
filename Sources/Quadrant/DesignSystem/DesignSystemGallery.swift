@@ -1,6 +1,11 @@
 import SwiftUI
 
 struct DesignSystemGallery: View {
+    #if os(macOS)
+    @State private var composerPresentation = TaskComposerPresentation()
+    @StateObject private var composerStore = TaskStore(inMemory: true)
+    @StateObject private var composerPreferences = AppPreferences()
+    #endif
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppSpacing.section) {
@@ -26,6 +31,12 @@ struct DesignSystemGallery: View {
                 Text("Body · 一切从清晰的层级开始").font(AppTypography.body)
                 Text("Callout · 次要说明").font(AppTypography.callout)
                 Text("Caption · 辅助信息").font(AppTypography.caption)
+                #if os(macOS)
+                AppSectionHeader(title: "统一弹窗", subtitle: "添加事项同款面板，支持嵌套与外侧取消")
+                AppDialogExample()
+                Text("Desktop · 系统语义字体支持 125% 字号偏好")
+                    .font(AppTypography.desktop(.body, scale: 1.25))
+                #endif
                 AppSectionHeader(title: "Buttons")
                 HStack(spacing: AppSpacing.x3) {
                     AppButton(title: "主要操作", systemImage: "plus", size: .prominent) {}
@@ -40,6 +51,17 @@ struct DesignSystemGallery: View {
                     Toggle("每日提醒", isOn: .constant(true))
                 }
                 .frame(height: 150)
+                #if os(macOS)
+                AppSectionHeader(title: "Task Composer", subtitle: "淡入放大，缩小淡出，遮罩独立过渡")
+                Button("打开添加事项") { composerPresentation.show(.task) }
+                AppSectionHeader(title: "Task Editor", subtitle: "分区表单，支持进退场动画与未保存确认")
+                TaskEditorExample()
+                AppSectionHeader(title: "Category Selection", subtitle: "直接选择类别，支持长名称与明确的选中状态")
+                TaskCategoryOptions(
+                    categories: ["工作", "生活", "需要持续跟进的长期学习与个人成长计划"],
+                    selection: "工作", onSelect: { _ in }, onClose: {}
+                )
+                #endif
                 AppSectionHeader(title: "Cards & Components")
                 AppCard {
                     VStack(alignment: .leading, spacing: AppSpacing.x2) {
@@ -51,6 +73,15 @@ struct DesignSystemGallery: View {
                             AppBadge(title: "已完成", tone: .success)
                             AppBadge(title: "需关注", tone: .warning)
                         }
+                    }
+                }
+                AppCard(elevated: false) {
+                    VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                        Label("任务系列 · 默认收起", systemImage: "point.3.connected.trianglepath.dotted")
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
+                        Text("准备新版首页发布").font(AppTypography.headline)
+                        Text("平面卡片通过表面与边框区分系列。").font(AppTypography.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 AppSectionHeader(title: "Lists")
@@ -70,6 +101,15 @@ struct DesignSystemGallery: View {
         }
         .background(AppColors.canvas)
         .tint(AppColors.brand)
+        #if os(macOS)
+        .environmentObject(composerStore)
+        .environmentObject(composerPreferences)
+        .overlay {
+            TaskComposerPanelHost(presentation: composerPresentation)
+                .environmentObject(composerStore)
+                .environmentObject(composerPreferences)
+        }
+        #endif
     }
 
     private func swatch(_ name: String, _ color: Color) -> some View {

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AITaskCreatorView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
 

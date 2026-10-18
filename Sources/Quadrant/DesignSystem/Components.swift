@@ -122,15 +122,24 @@ private struct AppActionButtonStyle: ButtonStyle {
 
 struct AppCard<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
-    @ViewBuilder let content: Content
+    let surface: Color
+    let elevated: Bool
+    let content: Content
+
+    init(surface: Color = AppColors.surface, elevated: Bool = true,
+         @ViewBuilder content: () -> Content) {
+        self.surface = surface
+        self.elevated = elevated
+        self.content = content()
+    }
 
     var body: some View {
         content
             .padding(AppSpacing.cardContent)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppColors.surface, in: RoundedRectangle(cornerRadius: AppRadius.card))
+            .background(surface, in: RoundedRectangle(cornerRadius: AppRadius.card))
             .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border))
-            .shadow(color: colorScheme == .dark ? .clear : AppShadows.cardColor,
+            .shadow(color: !elevated || colorScheme == .dark ? .clear : AppShadows.cardColor,
                     radius: AppShadows.cardRadius, y: AppShadows.cardOffset)
     }
 }

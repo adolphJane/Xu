@@ -41,8 +41,8 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var selection: AppSection? = .today
-    @State private var composerMode: TaskComposerMode?
-    @State private var composerCancelRequest = 0
+    // The reference stays stable while only the overlay observes mode changes.
+    @State private var composerPresentation = TaskComposerPresentation()
     @State private var selectedTask: TaskItem?
     @State private var taskBlueprintRoute: TaskBlueprintRoute?
     @State private var showsBlueprintLibrary = false
@@ -55,8 +55,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(
-                selection: $selection,
-                onCommand: { isCommandPalettePresented = true }
+                selection: $selection
             )
             .navigationSplitViewColumnWidth(min: 190, ideal: 216, max: 250)
         } detail: {
@@ -72,14 +71,12 @@ struct ContentView: View {
                     case .today: TodayWorkbenchView(
                         onSelect: { selectedTask = $0 },
                         onReport: { isReportPresented = true },
-                        onAddTask: { composerMode = .task },
-                        onAddCompleted: { composerMode = .completed },
-                        onAddWithAI: { composerMode = .ai }
+                        onAddTask: { composerPresentation.show(.task) }
                     )
                     case .tasks: TasksHubView(
                         showsBlueprintLibrary: $showsBlueprintLibrary,
                         onSelect: { selectedTask = $0 },
-                        onAddTask: { composerMode = .task }
+                        onAddTask: { composerPresentation.show(.task) }
                     )
                     case .blueprints: BlueprintsView()
                     case .quadrants: QuadrantBoard(onSelect: { selectedTask = $0 })
@@ -98,29 +95,10 @@ struct ContentView: View {
             .ignoresSafeArea(.container, edges: .top)
         }
         .overlay {
-            if let mode = composerMode {
-                GeometryReader { geometry in
-                    ZStack {
-                        Color.black.opacity(0.18)
-                            .contentShape(Rectangle())
-                            .onTapGesture { composerCancelRequest += 1 }
-                        TaskComposerView(
-                            mode: mode,
-                            cancelRequest: composerCancelRequest,
-                            onClose: { composerMode = nil }
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                        .shadow(color: .black.opacity(0.2), radius: 28, y: 12)
-                        .contentShape(Rectangle())
-                    }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                }
-                .ignoresSafeArea()
-                .zIndex(10)
-            }
+            TaskComposerPanelHost(presentation: composerPresentation)
         }
-        .sheet(item: $selectedTask) { task in TaskEditor(task: task) }
-        .sheet(item: $taskBlueprintRoute) { route in
+        .appDialog(item: $selectedTask) { task in TaskEditor(task: task) }
+        .appDialog(item: $taskBlueprintRoute) { route in
             if let blueprintID = route.blueprintID,
                store.blueprints.contains(where: { $0.id == blueprintID }) {
                 BlueprintDetailView(blueprintID: blueprintID, focusTaskID: route.taskID)
@@ -131,9 +109,9 @@ struct ContentView: View {
                 )
             }
         }
-        .sheet(isPresented: $isReportPresented) { DailyReportView() }
-        .sheet(isPresented: $isAIBlueprintPresented) { AIBlueprintCreatorView() }
-        .sheet(isPresented: $isSyncConflictPresented) {
+        .appDialog(isPresented: $isReportPresented) { DailyReportView() }
+        .appDialog(isPresented: $isAIBlueprintPresented) { AIBlueprintCreatorView() }
+        .appDialog(isPresented: $isSyncConflictPresented) {
             if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) }
         }
         .alert("操作提示", isPresented: Binding(
@@ -144,8 +122,19 @@ struct ContentView: View {
         } message: {
             Text(store.actionMessage ?? "")
         }
+        .alert("发现应用更新", isPresented: $preferences.shouldPresentUpdatePrompt) {
+            Button("下载并安装") { Task { await preferences.downloadAndInstallUpdate() } }
+            Button("稍后", role: .cancel) { }
+        } message: {
+            Text("发现版本 \(preferences.availableUpdate?.version ?? "")。可在“设置 → 数据与集成”查看更新内容；安装完成后应用会重新打开。")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .showCommandPalette)) { _ in isCommandPalettePresented = true }
-        .onReceive(NotificationCenter.default.publisher(for: .showTaskComposer)) { _ in composerMode = .task }
+        .onReceive(NotificationCenter.default.publisher(for: .runCommandFromSettings)) { notification in
+            guard let rawValue = notification.object as? String,
+                  let command = CommandPaletteAction(rawValue: rawValue) else { return }
+            performCommand(command)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showTaskComposer)) { _ in composerPresentation.show(.task) }
         .onReceive(NotificationCenter.default.publisher(for: .showTaskBlueprint)) { notification in
             guard let taskID = notification.object as? UUID else { return }
             selection = .tasks
@@ -162,7 +151,7 @@ struct ContentView: View {
             } catch { store.syncMessage = error.localizedDescription }
         }
         .task {
-            if preferences.autoCheckUpdates { await preferences.checkForUpdates() }
+            if preferences.autoCheckUpdates { await preferences.checkForUpdates(notify: true) }
             if preferences.syncEnabled, !preferences.syncFolderPath.isEmpty {
                 do {
                     try store.performFolderSync(folderPath: preferences.syncFolderPath)
@@ -174,9 +163,9 @@ struct ContentView: View {
 
     private func performCommand(_ command: CommandPaletteAction) {
         switch command {
-        case .addTask: composerMode = .task
-        case .addCompleted: composerMode = .completed
-        case .aiTask: composerMode = .ai
+        case .addTask: composerPresentation.show(.task)
+        case .addCompleted: composerPresentation.show(.completed)
+        case .aiTask: composerPresentation.show(.ai)
         case .aiBlueprint: isAIBlueprintPresented = true
         case .dailyReport: isReportPresented = true
         case .openToday: selection = .today
@@ -191,11 +180,9 @@ struct ContentView: View {
 }
 
 struct SidebarView: View {
-    @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Binding var selection: AppSection?
-    let onCommand: () -> Void
 
     private let primarySections: [AppSection] = [.today, .tasks, .categories, .calendar]
     private let recordSections: [AppSection] = [.inbox, .anniversaries, .completed, .report]
@@ -229,30 +216,24 @@ struct SidebarView: View {
                 .padding(.horizontal, 11)
             }
 
-            VStack(spacing: 12) {
-                Button(action: onCommand) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "command").font(.caption)
-                        Text("快速操作").font(.caption)
-                        Spacer()
-                        Text("⌘⇧␣").font(.caption2.monospaced()).foregroundStyle(.tertiary)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 42)
-                    .background(preferences.cardBackground.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+            SettingsLink {
+                HStack(spacing: 12) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 22)
+                    Text("应用设置")
+                        .font(.system(size: 14, weight: .medium))
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                SettingsLink {
-                    Label("应用设置", systemImage: "gearshape")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(minHeight: 40)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 46)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
             }
-            .padding(14)
+            .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
+            .padding(.horizontal, 11)
+            .padding(.vertical, 14)
         }
         .background(preferences.pageBackground.opacity(0.9))
     }
@@ -278,11 +259,7 @@ struct SidebarView: View {
                     .frame(width: 22)
                 Text(section.rawValue).font(.system(size: 14, weight: selection == section ? .semibold : .medium))
                 Spacer()
-                if section == .today && !store.todayTasks.isEmpty {
-                    Text("\(store.todayTasks.filter(\.needsAction).count)")
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(selection == section ? preferences.accentColor : .secondary)
-                }
+                if section == .today { SidebarTodayCount(isSelected: selection == section) }
             }
             .foregroundStyle(selection == section ? preferences.accentColor : .secondary)
             .padding(.horizontal, 12)
@@ -292,6 +269,23 @@ struct SidebarView: View {
         }
         .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
         .accessibilityAddTraits(selection == section ? [.isSelected] : [])
+    }
+}
+
+private struct SidebarTodayCount: View {
+    @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var preferences: AppPreferences
+    let isSelected: Bool
+
+    var body: some View {
+        Group {
+            if !store.todayTasks.isEmpty {
+                Text("\(store.todayTasks.filter(\.needsAction).count)")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(isSelected ? preferences.accentColor : .secondary)
+            }
+        }
+        .transaction { $0.animation = nil }
     }
 }
 
@@ -326,7 +320,7 @@ struct AddTaskControl: View {
             Menu {
                 Button("新增待办", systemImage: "plus.circle", action: onAddTask)
                 Button("记录已完成", systemImage: "checkmark.circle", action: onAddCompleted)
-                Button("AI 一句话生成", systemImage: "sparkles", action: onAddWithAI)
+                Button("AI 生成任务", systemImage: "sparkles", action: onAddWithAI)
             } label: {
                 Color.clear
                     .frame(width: 32, height: 34)
@@ -482,7 +476,7 @@ struct TodayView: View {
             .padding(.horizontal, 34)
             .padding(.vertical, 30)
         }
-        .sheet(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
+        .appDialog(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
     }
 }
 
@@ -709,7 +703,7 @@ struct TaskList: View {
             }
             ForEach(visibleRoots) { task in
                 TaskListTreeRow(task: task, tasks: tasks, depth: 0,
-                                collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
+                                visited: [], collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
             }
         }
     }
@@ -719,10 +713,13 @@ private struct TaskListTreeRow: View {
     let task: TaskItem
     let tasks: [TaskItem]
     let depth: Int
+    let visited: Set<UUID>
     @Binding var collapsedRootIDs: Set<UUID>
     let onSelect: (TaskItem) -> Void
 
-    private var children: [TaskItem] { tasks.filter { $0.parentTaskID == task.id && $0.id != task.id } }
+    private var children: [TaskItem] {
+        TaskTreeProjection.directChildren(of: task.id, in: tasks).filter { !visited.contains($0.id) }
+    }
 
     var body: some View {
         HStack(spacing: AppSpacing.x2) {
@@ -741,10 +738,11 @@ private struct TaskListTreeRow: View {
             }
             TaskCard(task: task, onSelect: onSelect)
         }
-        .padding(.leading, CGFloat(depth) * AppSpacing.x6)
-        if !collapsedRootIDs.contains(task.id) && depth < 20 {
+        .padding(.leading, CGFloat(min(depth, 6)) * AppSpacing.x6)
+        if !collapsedRootIDs.contains(task.id) {
             ForEach(children) { child in
                 TaskListTreeRow(task: child, tasks: tasks, depth: depth + 1,
+                                visited: visited.union([task.id]),
                                 collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
             }
         }
@@ -756,39 +754,68 @@ struct TaskCard: View {
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var isBlocking = false
+    @State private var isAddingChild = false
+    @State private var isConfirmingDelete = false
     @State private var isHovered = false
+    @State private var isShowingCompletionFeedback = false
     let task: TaskItem
     var compact = false
+    var embedded = false
     let onSelect: (TaskItem) -> Void
+    var onEditTask: ((TaskItem) -> Void)? = nil
+    var onShowDetails: ((TaskItem) -> Void)? = nil
 
     private var childTasks: [TaskItem] { store.tasks.filter { $0.parentTaskID == task.id } }
 
     var body: some View {
         HStack(spacing: 12) {
             Button { primaryAction() } label: {
-                Image(systemName: statusIcon)
-                    .font(.title3).foregroundStyle(statusColor)
+                Image(systemName: embedded && (isShowingCompletionFeedback || task.isCompleted)
+                      ? "checkmark.circle.fill" : embedded && task.needsAction ? "circle" : statusIcon)
+                    .font(.title3)
+                    .foregroundStyle(isShowingCompletionFeedback ? AppColors.success : statusColor)
                     .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: isShowingCompletionFeedback)
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }.buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
-                .disabled(!task.isCompleted && store.executionBlockReason(for: task) != nil)
-                .help(task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
-                .accessibilityLabel(task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
+                .offset(y: embedded ? -AppSpacing.x2 : 0)
+                .disabled(isShowingCompletionFeedback || (!task.isCompleted && store.executionBlockReason(for: task) != nil))
+                .help(isShowingCompletionFeedback ? "已完成" : task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
+                .accessibilityLabel(isShowingCompletionFeedback ? "\(task.title)已完成" : task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    if task.parentTaskID != nil { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
+                    if task.parentTaskID != nil && !embedded { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
                     if task.planLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
-                    Text(task.title).strikethrough(task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
+                    Text(task.title).strikethrough(isShowingCompletionFeedback || task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
+                        .font(embedded ? AppTypography.desktop(.body, scale: preferences.fontScale,
+                                                              weight: .semibold, design: preferences.fontStyle.design) : nil)
                 }
-                if !childTasks.isEmpty {
+                if !childTasks.isEmpty && !embedded {
                     Text("\(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 项子任务已完成")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if !compact {
+                if embedded {
+                    Text(isShowingCompletionFeedback ? "已完成" : task.displayStatusTitle)
+                    .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
+                                                design: preferences.fontStyle.design))
+                    .foregroundStyle(statusColor)
+                    if task.effectiveStatus == .blocked, let reason = task.blockReason, !reason.isEmpty {
+                        Label(reason, systemImage: "lock")
+                            .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
+                                                        design: preferences.fontStyle.design))
+                            .foregroundStyle(AppColors.warning)
+                            .lineLimit(2)
+                    } else if task.needsAction, let reason = store.executionBlockReason(for: task) {
+                        Label(reason, systemImage: "lock")
+                            .font(AppTypography.caption)
+                            .foregroundStyle(AppColors.warning)
+                            .lineLimit(2)
+                    }
+                } else if !compact {
                     HStack(spacing: 7) {
-                        if !task.isPending { Text(task.effectiveStatus.title).foregroundStyle(statusColor) }
+                        if !task.isPending { Text(task.displayStatusTitle).foregroundStyle(statusColor) }
                         Label(task.projectName, systemImage: "folder").foregroundStyle(.secondary)
                         Label(task.categoryName, systemImage: "tag").foregroundStyle(.secondary)
                         Label(task.quadrant.title, systemImage: "square.grid.2x2").foregroundStyle(preferences.color(for: task.quadrant))
@@ -813,7 +840,22 @@ struct TaskCard: View {
                 }
             }
             Spacer()
-            Button { secondaryAction() } label: {
+            if embedded {
+                Group {
+                    if let dueDate = task.dueDate {
+                        Text("截止 \(dueDate, format: .dateTime.month().day())")
+                    } else if task.isUnscheduled {
+                        Text("暂未安排")
+                    } else {
+                        Text("计划 \(task.scheduledFor, format: .dateTime.month().day())")
+                    }
+                }
+                .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
+                                            design: preferences.fontStyle.design))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            if !embedded { Button { secondaryAction() } label: {
                 Image(systemName: task.needsAction ? "xmark.circle" : "arrow.uturn.backward.circle")
                     .foregroundStyle(task.needsAction ? AppColors.textSecondary : preferences.accentColor)
                     .frame(width: 36, height: 36)
@@ -821,8 +863,13 @@ struct TaskCard: View {
             }
             .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
             .help(task.needsAction ? "取消任务（无需完成）" : "恢复为待完成")
-            .accessibilityLabel(task.needsAction ? "取消\(task.title)" : "恢复\(task.title)")
+            .accessibilityLabel(task.needsAction ? "取消\(task.title)" : "恢复\(task.title)") }
             Menu {
+                if let onShowDetails {
+                    Button("查看详情", systemImage: "info.circle") { onShowDetails(task) }
+                }
+                Button("编辑任务", systemImage: "pencil") { (onEditTask ?? onSelect)(task) }
+                Button("添加子任务", systemImage: "plus") { isAddingChild = true }
                 Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
                     TaskBlueprintNavigation.open(task)
                 }
@@ -867,26 +914,49 @@ struct TaskCard: View {
                     Button("移至\(quadrant.title)") { store.move(task, to: quadrant) }
                 }
                 Divider()
-                Button("删除", role: .destructive) { store.delete(task) }
+                Button("删除", role: .destructive) {
+                    if childTasks.isEmpty { store.delete(task) }
+                    else { isConfirmingDelete = true }
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
+            .menuIndicator(embedded ? .hidden : .automatic)
+            .fixedSize(horizontal: embedded, vertical: false)
             .accessibilityLabel("更多\(task.title)操作")
         }
-        .padding(compact ? max(6, preferences.density.spacing - 2) : preferences.density.spacing + 1)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius).stroke(isHovered ? preferences.accentColor.opacity(0.28) : .primary.opacity(0.07)))
-        .shadow(color: .black.opacity(isHovered ? max(0.1, preferences.shadowStrength) : preferences.shadowStrength), radius: isHovered ? 12 : 7, y: isHovered ? 4 : 2)
-        .offset(y: isHovered && !(preferences.reduceMotion || systemReduceMotion) ? -1 : 0)
+        .padding(embedded ? 0 : (compact ? max(6, preferences.density.spacing - 2) : preferences.density.spacing + 1))
+        .padding(.vertical, embedded ? AppSpacing.x2 : 0)
+        .background {
+            if !embedded {
+                RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius)
+                    .fill(preferences.cardBackground)
+            }
+        }
+        .overlay {
+            if !embedded {
+                RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius)
+                    .stroke(isHovered ? preferences.accentColor.opacity(0.28) : .primary.opacity(0.07))
+            }
+        }
+        .shadow(color: embedded ? .clear : .black.opacity(isHovered ? max(0.1, preferences.shadowStrength) : preferences.shadowStrength), radius: isHovered ? 12 : 7, y: isHovered ? 4 : 2)
+        .offset(y: embedded || preferences.reduceMotion || systemReduceMotion ? 0 : (isHovered ? -1 : 0))
         .onHover { hovering in
             withAnimation(preferences.reduceMotion || systemReduceMotion ? nil : .easeOut(duration: 0.2)) { isHovered = hovering }
         }
         .contentShape(Rectangle())
         .onTapGesture { onSelect(task) }
-        .sheet(isPresented: $isBlocking) { BlockTaskEditor(task: task) }
+        .appDialog(isPresented: $isBlocking) { BlockTaskEditor(task: task) }
+        .appDialog(isPresented: $isAddingChild) { TaskChildQuickAddView(parentTaskID: task.id) }
+        .confirmationDialog("删除“\(task.title)”？", isPresented: $isConfirmingDelete) {
+            Button("删除任务", role: .destructive) { store.delete(task) }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("\(childTasks.count) 项直接子任务会归属到上一层，子任务自身的下级结构会保留。")
+        }
     }
 
     private var statusIcon: String {
@@ -918,9 +988,22 @@ struct TaskCard: View {
     }
 
     private func primaryAction() {
-        withAnimation(preferences.reduceMotion || systemReduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.84)) {
-            if task.isCompleted { store.restore(task) } else { store.markCompleted(task) }
+        if embedded && !task.isCompleted && !preferences.reduceMotion && !systemReduceMotion {
+            guard !isShowingCompletionFeedback else { return }
+            withAnimation(AppTheme.springAnimation) {
+                isShowingCompletionFeedback = true
+            }
+            Task { @MainActor in
+                do { try await Task.sleep(for: .milliseconds(350)) }
+                catch { isShowingCompletionFeedback = false; return }
+                defer { isShowingCompletionFeedback = false }
+                guard let current = store.tasks.first(where: { $0.id == task.id }),
+                      current.effectiveStatus == task.effectiveStatus else { return }
+                store.markCompleted(current)
+            }
+            return
         }
+        if task.isCompleted { store.restore(task) } else { store.markCompleted(task) }
     }
 
     private func secondaryAction() {
@@ -935,8 +1018,58 @@ struct TaskCard: View {
     }
 }
 
+struct TaskChildQuickAddView: View {
+    @AppDismiss private var dismiss
+    @EnvironmentObject private var store: TaskStore
+    let parentTaskID: UUID
+    @State private var title = ""
+    @State private var error: String?
+
+    private var parent: TaskItem? { store.tasks.first { $0.id == parentTaskID } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppSpacing.x4) {
+            Text("添加子任务").font(AppTypography.title)
+            if let parent {
+                Text("归属：\(TaskTreeProjection.path(to: parent.id, in: store.tasks).map(\.title).joined(separator: " › "))")
+                    .font(AppTypography.callout)
+                    .foregroundStyle(.secondary)
+            }
+            TextField("子任务名称", text: $title)
+                .onSubmit(add)
+            if let error { Text(error).foregroundStyle(AppColors.danger).font(AppTypography.caption) }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("添加", action: add)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(AppSpacing.page)
+        .frame(width: 430)
+    }
+
+    private func add() {
+        guard store.addChild(title: title, to: parentTaskID) else {
+            error = store.actionMessage ?? "无法添加子任务。"
+            store.actionMessage = nil
+            return
+        }
+        dismiss()
+    }
+}
+
+#Preview("新增下级任务") {
+    let store = TaskStore(inMemory: true)
+    let parent = TaskItem(title: "准备新版首页发布", quadrant: .schedule)
+    store.add(parent)
+    return TaskChildQuickAddView(parentTaskID: parent.id)
+        .environmentObject(store)
+}
+
 struct BlockTaskEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let task: TaskItem
     @State private var reason = ""
@@ -1155,13 +1288,13 @@ struct ReportLanding: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .padding(30)
         }
-        .sheet(item: $selectedReport) { ReportDetailView(report: $0) }
-        .sheet(isPresented: $isWeeklyReviewPresented) { WeeklyReviewEditor() }
+        .appDialog(item: $selectedReport) { ReportDetailView(report: $0) }
+        .appDialog(isPresented: $isWeeklyReviewPresented) { WeeklyReviewEditor() }
     }
 }
 
 struct ReportDetailView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     let report: DailyReportItem
 
     var body: some View {
@@ -1188,175 +1321,9 @@ struct ReportDetailView: View {
     }
 }
 
-struct TaskEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var store: TaskStore
-    @EnvironmentObject private var preferences: AppPreferences
-    private var original: TaskItem?
-    @State private var title = ""
-    @State private var notes = ""
-    @State private var project = ""
-    @State private var category = ""
-    @State private var reportCategory: ReportCategory = .projectProgress
-    @State private var quadrant: Quadrant = .schedule
-    @State private var scheduledFor = Date.now
-    @State private var isScheduled = true
-    @State private var hasDeadline = false
-    @State private var dueDate = Date.now
-    @State private var estimatedMinutes = 30
-    @State private var blueprintID: UUID?
-    @State private var stageID: UUID?
-    @State private var milestoneID: UUID?
-    @State private var dependencyIDs: Set<UUID>
-    @State private var isPlanLocked: Bool
-    @State private var appliedDefaults = false
-    @State private var openBlueprintOnDismiss = false
-
-    init(task: TaskItem? = nil, blueprintID: UUID? = nil) {
-        original = task
-        _title = State(initialValue: task?.title ?? "")
-        _notes = State(initialValue: task?.notes ?? "")
-        _project = State(initialValue: task?.project ?? "")
-        _category = State(initialValue: task?.category ?? "")
-        _reportCategory = State(initialValue: task?.effectiveReportCategory ?? .projectProgress)
-        _quadrant = State(initialValue: task?.quadrant ?? .schedule)
-        _scheduledFor = State(initialValue: task?.scheduledFor ?? .now)
-        _isScheduled = State(initialValue: task?.effectiveStatus != .unscheduled)
-        _hasDeadline = State(initialValue: task?.dueDate != nil)
-        _dueDate = State(initialValue: task?.dueDate ?? .now)
-        _estimatedMinutes = State(initialValue: task?.estimatedMinutes ?? 30)
-        _blueprintID = State(initialValue: task?.blueprintID ?? blueprintID)
-        _stageID = State(initialValue: task?.stageID)
-        _milestoneID = State(initialValue: task?.milestoneID)
-        _dependencyIDs = State(initialValue: Set(task?.effectiveDependencyIDs ?? []))
-        _isPlanLocked = State(initialValue: task?.planLocked ?? false)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(original == nil ? "新建事项" : "编辑事项").font(.title2.weight(.bold))
-                Spacer()
-                if original != nil {
-                    Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
-                        openBlueprintOnDismiss = true
-                        dismiss()
-                    }
-                    .help("查看该事项的蓝图、列表和四象限")
-                }
-            }
-                .padding(22)
-            Form {
-                TextField("事项名称", text: $title)
-                TextField("所属项目（日报按项目归类）", text: $project)
-                TaskCategoryField(category: $category)
-                TextField("备注（可选）", text: $notes, axis: .vertical)
-                Picker("日报分类", selection: $reportCategory) {
-                    ForEach(ReportCategory.allCases) { Text($0.title).tag($0) }
-                }
-                Picker("关联蓝图", selection: $blueprintID) {
-                    Text("不关联蓝图").tag(nil as UUID?)
-                    ForEach(store.blueprints) { Text($0.name).tag($0.id as UUID?) }
-                }
-                if let blueprintID, !store.stages(for: blueprintID).isEmpty {
-                    Picker("所属阶段", selection: $stageID) {
-                        Text("不指定阶段").tag(nil as UUID?)
-                        ForEach(store.stages(for: blueprintID)) { Text($0.name).tag($0.id as UUID?) }
-                    }
-                }
-                if let stageID, !store.milestones(for: stageID).isEmpty {
-                    Picker("关联里程碑", selection: $milestoneID) {
-                        Text("不关联里程碑").tag(nil as UUID?)
-                        ForEach(store.milestones(for: stageID)) { Text($0.name).tag($0.id as UUID?) }
-                    }
-                }
-                if let blueprintID {
-                    let candidates = store.tasks(for: blueprintID).filter { $0.id != original?.id }
-                    if !candidates.isEmpty {
-                        DisclosureGroup("前置依赖（完成后才能开始）") {
-                            ForEach(candidates) { candidate in
-                                Toggle(candidate.title, isOn: Binding(
-                                    get: { dependencyIDs.contains(candidate.id) },
-                                    set: { selected in
-                                        if selected { dependencyIDs.insert(candidate.id) }
-                                        else { dependencyIDs.remove(candidate.id) }
-                                    }
-                                ))
-                                .disabled(original.map { DependencyRule.wouldCreateCycle(taskID: $0.id, adding: candidate.id, tasks: store.tasks) } ?? false)
-                            }
-                        }
-                    }
-                }
-                Picker("四象限", selection: $quadrant) {
-                    ForEach(Quadrant.allCases) { Text($0.title).tag($0) }
-                }
-                if original == nil || original?.isPending == true || original?.isUnscheduled == true {
-                    Toggle("安排到日期", isOn: $isScheduled)
-                }
-                if isScheduled { DatePicker("安排日期", selection: $scheduledFor, displayedComponents: .date) }
-                Toggle("设置截止日期", isOn: $hasDeadline)
-                if hasDeadline { DatePicker("截止日期", selection: $dueDate, displayedComponents: [.date, .hourAndMinute]) }
-                Stepper("预计时长：\(estimatedMinutes) 分钟", value: $estimatedMinutes, in: 5...480, step: 5)
-                if isScheduled { Toggle("锁定计划日期（AI 重新规划不可修改）", isOn: $isPlanLocked) }
-            }
-            .formStyle(.grouped)
-            HStack {
-                Spacer()
-                Button("取消", role: .cancel) { dismiss() }
-                Button("保存") { save() }.buttonStyle(.borderedProminent).disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .padding(20)
-        }
-        .frame(width: 540, height: 700)
-        .onAppear {
-            guard original == nil, !appliedDefaults else { return }
-            quadrant = preferences.defaultQuadrant
-            estimatedMinutes = preferences.defaultDuration
-            if let blueprintID, project.isEmpty {
-                project = store.blueprints.first { $0.id == blueprintID }?.name ?? ""
-            }
-            appliedDefaults = true
-        }
-        .onChange(of: blueprintID) { _, newValue in
-            stageID = nil
-            milestoneID = nil
-            dependencyIDs = []
-            if let newValue, project.isEmpty {
-                project = store.blueprints.first { $0.id == newValue }?.name ?? ""
-            }
-        }
-        .onChange(of: stageID) { _, _ in milestoneID = nil }
-        .onDisappear {
-            if openBlueprintOnDismiss, let original { TaskBlueprintNavigation.open(original) }
-        }
-    }
-
-    private func save() {
-        let task = TaskItem(
-            id: original?.id ?? UUID(), title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes,
-            project: project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : project.trimmingCharacters(in: .whitespacesAndNewlines),
-            category: category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
-            reportCategory: reportCategory,
-            quadrant: quadrant, scheduledFor: scheduledFor, dueDate: hasDeadline ? dueDate : nil,
-            estimatedMinutes: estimatedMinutes, isComplete: original?.isComplete ?? false,
-            status: isScheduled ? (original?.isUnscheduled == true ? .pending : original?.status) : .unscheduled,
-            completedAt: original?.completedAt, createdAt: original?.createdAt ?? .now,
-            blueprintID: blueprintID, stageID: stageID, milestoneID: milestoneID,
-            startedAt: original?.startedAt, originalScheduledFor: original?.originalScheduledFor,
-            blockReason: original?.blockReason, statusChangedAt: original?.statusChangedAt,
-            parentTaskID: original?.parentTaskID,
-            dependencyIDs: dependencyIDs.isEmpty ? nil : Array(dependencyIDs),
-            originalDueDate: original?.originalDueDate,
-            isPlanLocked: isScheduled && isPlanLocked
-        )
-        if original == nil { store.add(task) }
-        else { guard store.update(task) else { return } }
-        dismiss()
-    }
-}
 
 struct QuickCompletedEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @State private var title = ""
@@ -1460,7 +1427,7 @@ enum ReportLengthPreset: String, CaseIterable, Identifiable {
 }
 
 struct DailyReportView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @State private var content = ""
@@ -1565,7 +1532,6 @@ struct DailyReportView: View {
 struct MenuBarView: View {
     @EnvironmentObject private var store: TaskStore
     @Environment(\.openWindow) private var openWindow
-    @State private var composerMode: TaskComposerMode?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1604,7 +1570,7 @@ struct MenuBarView: View {
             }
             if store.todayTasks.filter(\.needsAction).isEmpty { Text("今天的待办已处理完毕。🎉").foregroundStyle(.secondary) }
             Divider()
-            AddTaskControl(onAddTask: { composerMode = .task }, onAddCompleted: { composerMode = .completed }, onAddWithAI: { composerMode = .ai })
+            AddTaskControl(onAddTask: { openComposer(.addTask) }, onAddCompleted: { openComposer(.addCompleted) }, onAddWithAI: { openComposer(.aiTask) })
             Button("命令面板", systemImage: "command") {
                 openWindow(id: "main")
                 DispatchQueue.main.async { NotificationCenter.default.post(name: .showCommandPalette, object: nil) }
@@ -1616,13 +1582,15 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 300)
-        .clickAwayPopover(isPresented: Binding(
-            get: { composerMode != nil },
-            set: { if !$0 { composerMode = nil } }
-        )) { request, close in
-            if let mode = composerMode { TaskComposerView(mode: mode, cancelRequest: request, onClose: close) }
+    }
+
+    private func openComposer(_ action: CommandPaletteAction) {
+        openWindow(id: "main")
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .runCommandFromSettings, object: action.rawValue)
         }
     }
+
 }
 
 struct MenuBarStatusLabel: View {
@@ -1669,12 +1637,16 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .tabItem { Label("通用", systemImage: "gearshape") }
 
+            QuickActionsSettingsView()
+                .tabItem { Label("快速操作", systemImage: "command") }
+
             Form {
                 Section("DeepSeek 连接") {
                     SecureField("API Key", text: $store.apiKey)
                     TextField("模型", text: $preferences.deepSeekModel)
+                    TextField("图片识别模型", text: $preferences.deepSeekVisionModel)
                     TextField("接口地址", text: $preferences.deepSeekEndpoint)
-                    Text("密钥保存在 macOS 钥匙串中，仅在你主动使用 AI 任务、蓝图、重新规划或日报时发送。")
+                    Text("图片识别默认使用 deepseek-flash。选择图片并生成草稿时，图片和补充说明会发送到所设接口；密钥保存在 macOS 钥匙串中。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("AI 数据范围") {
@@ -1702,5 +1674,41 @@ struct SettingsView: View {
         }
         .padding(16)
         .frame(width: 720, height: 520)
+    }
+}
+
+private struct QuickActionsSettingsView: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Form {
+            Section("快速操作") {
+                ForEach(CommandPaletteAction.allCases) { command in
+                    HStack {
+                        Label(command.rawValue, systemImage: command.icon)
+                        Spacer()
+                        Button("执行") { run(command) }
+                    }
+                }
+            }
+            Section("快捷键") {
+                Label("打开快速操作面板", systemImage: "command")
+                Text("⌘⇧Space")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func run(_ command: CommandPaletteAction) {
+        if command == .openWidget {
+            openWindow(id: "widget")
+            return
+        }
+        openWindow(id: "main")
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .runCommandFromSettings, object: command.rawValue)
+        }
     }
 }

@@ -28,12 +28,12 @@ struct BlueprintsView: View {
                 HStack {
                     Button("AI 生成蓝图", systemImage: "sparkles") { isAICreating = true }.buttonStyle(.borderedProminent)
                     Button("从模板创建", systemImage: "square.stack.3d.up.fill") { isChoosingTemplate = true }
-                        .popover(isPresented: $isChoosingTemplate, arrowEdge: .bottom) {
+                        .appDialog(isPresented: $isChoosingTemplate) {
                             BlueprintTemplatePicker()
                         }
                     Button("导入蓝图", systemImage: "square.and.arrow.down") { importBlueprint() }
                     Button("AI 变更记录", systemImage: "clock.arrow.circlepath") { isShowingHistory = true }
-                        .popover(isPresented: $isShowingHistory, arrowEdge: .bottom) {
+                        .appDialog(isPresented: $isShowingHistory) {
                             PlanChangeHistoryView()
                         }
                     Spacer()
@@ -71,12 +71,12 @@ struct BlueprintsView: View {
             .padding(.horizontal, 34)
             .padding(.vertical, 30)
         }
-        .clickAwayPopover(isPresented: $isAdding) { request, close in
-            BlueprintEditor(cancelRequest: request, onClose: close)
+        .appDialog(isPresented: $isAdding) {
+            BlueprintEditor()
         }
-        .sheet(isPresented: $isAICreating) { AIBlueprintCreatorView() }
-        .sheet(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
-        .sheet(item: $selectedTaskRoot) { TaskBlueprintView(rootTaskID: $0.id) }
+        .appDialog(isPresented: $isAICreating) { AIBlueprintCreatorView() }
+        .appDialog(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
+        .appDialog(item: $selectedTaskRoot) { TaskBlueprintView(rootTaskID: $0.id) }
         .alert("导入蓝图", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
             Button("知道了") { importMessage = nil }
         } message: { Text(importMessage ?? "") }
@@ -179,7 +179,7 @@ struct BlueprintCard: View {
 }
 
 struct BlueprintEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     private let original: BlueprintItem?
     @State private var name: String
@@ -190,10 +190,8 @@ struct BlueprintEditor: View {
     @State private var colorHex: String
     @State private var showDiscardConfirmation = false
     private let initialDueDate: Date
-    private let cancelRequest: Int
-    private let onClose: (() -> Void)?
 
-    init(blueprint: BlueprintItem? = nil, cancelRequest: Int = 0, onClose: (() -> Void)? = nil) {
+    init(blueprint: BlueprintItem? = nil) {
         let defaultDueDate = blueprint?.dueDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
         original = blueprint
         _name = State(initialValue: blueprint?.name ?? "")
@@ -201,8 +199,6 @@ struct BlueprintEditor: View {
         _startDate = State(initialValue: blueprint?.startDate ?? .now)
         _dueDate = State(initialValue: defaultDueDate)
         initialDueDate = defaultDueDate
-        self.cancelRequest = cancelRequest
-        self.onClose = onClose
         _status = State(initialValue: blueprint?.status ?? .active)
         _colorHex = State(initialValue: blueprint?.colorHex ?? "4F65D9")
     }
@@ -245,9 +241,7 @@ struct BlueprintEditor: View {
             .padding(20)
         }
         .frame(width: 520, height: 470)
-        .onChange(of: cancelRequest) { _, _ in
-            if !showDiscardConfirmation { cancel() }
-        }
+        .onAppDialogCancel { if !showDiscardConfirmation { cancel() } }
         .onExitCommand { cancel() }
         .confirmationDialog("放弃未保存的蓝图？", isPresented: $showDiscardConfirmation) {
             Button("放弃", role: .destructive) { close() }
@@ -265,11 +259,11 @@ struct BlueprintEditor: View {
         if hasChanges { showDiscardConfirmation = true } else { close() }
     }
 
-    private func close() { if let onClose { onClose() } else { dismiss() } }
+    private func close() { dismiss() }
 }
 
 struct BlueprintDetailView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprintID: UUID
     @State private var isAddingStage = false
@@ -326,10 +320,11 @@ struct BlueprintDetailView: View {
                 }
             }
             .frame(minWidth: 1100, minHeight: 740)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
-                ToolbarItem { Button("编辑", systemImage: "pencil") { isEditing = true } }
-                ToolbarItem {
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack(spacing: AppSpacing.x3) {
+                    Button("关闭") { dismiss() }
+                    Spacer()
+                    Button("编辑", systemImage: "pencil") { isEditing = true }
                     Menu {
                         Button("AI 重新规划", systemImage: "sparkles") { isAIReplanning = true }
                         Button("批量重新规划", systemImage: "calendar.badge.clock") { isRescheduling = true }
@@ -346,23 +341,22 @@ struct BlueprintDetailView: View {
                             if let blueprint { exportBlueprint(blueprint) }
                         }
                     } label: { Label("更多", systemImage: "ellipsis.circle") }
-                }
-                ToolbarItem(placement: .destructiveAction) {
                     Button("删除蓝图", role: .destructive) { showDeleteConfirmation = true }
                 }
+                .padding(AppSpacing.x3)
+                .background(AppColors.surface)
             }
         }
-        .sheet(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprintID) }
-        .sheet(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprintID, stage: $0) }
-        .clickAwayPopover(isPresented: $isAddingTask) { request, close in
-            TaskComposerView(blueprintID: blueprintID, opensBlueprintOnSave: false,
-                             cancelRequest: request, onClose: close)
+        .appDialog(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprintID) }
+        .appDialog(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprintID, stage: $0) }
+        .appDialog(isPresented: $isAddingTask) {
+            TaskComposerView(blueprintID: blueprintID, opensBlueprintOnSave: false)
         }
-        .sheet(item: $editingTask) { TaskEditor(task: $0) }
-        .sheet(isPresented: $isRescheduling) { ReschedulePreviewView(blueprintID: blueprintID) }
-        .sheet(isPresented: $isAIReplanning) { if let blueprint { AIReplanView(blueprint: blueprint) } }
-        .clickAwayPopover(isPresented: $isEditing) { request, close in
-            if let blueprint { BlueprintEditor(blueprint: blueprint, cancelRequest: request, onClose: close) }
+        .appDialog(item: $editingTask) { TaskEditor(task: $0) }
+        .appDialog(isPresented: $isRescheduling) { ReschedulePreviewView(blueprintID: blueprintID) }
+        .appDialog(isPresented: $isAIReplanning) { if let blueprint { AIReplanView(blueprint: blueprint) } }
+        .appDialog(isPresented: $isEditing) {
+            if let blueprint { BlueprintEditor(blueprint: blueprint) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .focusBlueprintTask)) { notification in
             if notification.userInfo?["blueprintID"] as? UUID == blueprintID {
@@ -528,7 +522,7 @@ struct StagePanel: View {
 }
 
 struct StageEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprintID: UUID
     @State private var name = ""
@@ -556,7 +550,7 @@ struct StageEditor: View {
 }
 
 struct MilestoneEditor: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprintID: UUID
     let stage: StageItem

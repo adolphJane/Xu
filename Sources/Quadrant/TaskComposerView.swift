@@ -1,4 +1,6 @@
 import SwiftUI
+import ImageIO
+import UniformTypeIdentifiers
 
 enum TaskComposerMode: String, CaseIterable, Identifiable {
     case task = "待办"
@@ -32,7 +34,7 @@ private struct SubtaskDraft: Identifiable {
 
 /// One creation surface for tasks, completed work, and editable AI drafts.
 struct TaskComposerView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
@@ -43,6 +45,10 @@ struct TaskComposerView: View {
     @State private var mode: TaskComposerMode
     @State private var title = ""
     @State private var sentence = ""
+    @State private var selectedImageData: Data?
+    @State private var selectedImageName: String?
+    @State private var imageImportError: String?
+    @State private var isChoosingImage = false
     @State private var hasAIDraft = false
     @State private var subtasks: [SubtaskDraft] = []
     @State private var subtaskInput = ""
@@ -70,27 +76,30 @@ struct TaskComposerView: View {
     @State private var keepOpen = false
     @State private var feedback: String?
     @State private var appliedDefaults = false
+    @Environment(\.appDialogPresentation) private var dialogPresentation
+    private var isClosing: Bool { dialogPresentation?.isClosing ?? false }
     private let opensBlueprintOnSave: Bool
-    private let cancelRequest: Int
-    private let onClose: (() -> Void)?
+    private let isPresentationActive: Bool
 
     init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil, category: String? = nil,
-         opensBlueprintOnSave: Bool = true, cancelRequest: Int = 0, onClose: (() -> Void)? = nil) {
+         opensBlueprintOnSave: Bool = true,
+         isPresentationActive: Bool = true) {
         _mode = State(initialValue: mode)
         _blueprintID = State(initialValue: blueprintID)
         _category = State(initialValue: category ?? "")
         self.opensBlueprintOnSave = opensBlueprintOnSave
-        self.cancelRequest = cancelRequest
-        self.onClose = onClose
+        self.isPresentationActive = isPresentationActive
     }
 
     private var motion: Animation? {
         preferences.reduceMotion || systemReduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86)
     }
 
+    private var reduceMotion: Bool { preferences.reduceMotion || systemReduceMotion }
+
     private var isAIInput: Bool { mode == .ai && !hasAIDraft }
     private var composerHeight: CGFloat {
-        if isAIInput { return 390 }
+        if isAIInput { return selectedImageData == nil ? 450 : 590 }
         if showDetails || !subtasks.isEmpty || isAddingSubtask { return 690 }
         return 575
     }
@@ -119,20 +128,19 @@ struct TaskComposerView: View {
         }
         .frame(width: 630, height: composerHeight)
         .animation(motion, value: composerHeight)
-        .background(preferences.pageBackground)
         .tint(preferences.accentColor)
-        .onChange(of: cancelRequest) { _, _ in
-            if !showDiscardConfirmation { cancel() }
-        }
-        .onAppear {
-            guard !appliedDefaults else { return }
-            quadrant = preferences.defaultQuadrant
-            estimatedMinutes = preferences.defaultDuration
-            if let blueprintID {
-                project = store.blueprints.first(where: { $0.id == blueprintID })?.name ?? ""
+        .onAppDialogCancel { if !showDiscardConfirmation { cancel() } }
+        .task(id: isPresentationActive) {
+            guard isPresentationActive else { return }
+            if !appliedDefaults {
+                quadrant = preferences.defaultQuadrant
+                estimatedMinutes = preferences.defaultDuration
+                if let blueprintID {
+                    project = store.blueprints.first(where: { $0.id == blueprintID })?.name ?? ""
+                }
+                appliedDefaults = true
+                if mode == .ai { store.aiTaskError = nil }
             }
-            appliedDefaults = true
-            if mode == .ai { store.aiTaskError = nil }
             focusInput()
         }
         .onChange(of: blueprintID) { oldValue, newValue in
@@ -160,6 +168,9 @@ struct TaskComposerView: View {
                 object: navigationTaskID,
                 userInfo: navigationBlueprintID.map { ["blueprintID": $0] }
             )
+        }
+        .fileImporter(isPresented: $isChoosingImage, allowedContentTypes: [.image]) { result in
+            importImage(result)
         }
         .confirmationDialog("放弃未保存的任务？", isPresented: $showDiscardConfirmation) {
             Button("放弃", role: .destructive) {
@@ -230,9 +241,9 @@ struct TaskComposerView: View {
 
     private var aiInput: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("用一句话描述你要做的事")
+            Text("描述任务或导入图片")
                 .font(.headline)
-            TextField("例如：明天下午完成渠道适配测试，预计一小时", text: $sentence, axis: .vertical)
+            TextField("补充说明（可选，例如：按图片列出本周要完成的事项）", text: $sentence, axis: .vertical)
                 .lineLimit(3...5)
                 .font(.system(size: 16))
                 .textFieldStyle(.plain)
@@ -240,10 +251,37 @@ struct TaskComposerView: View {
                 .padding(16)
                 .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(preferences.accentColor.opacity(0.25)))
-                .onSubmit { if !cleanSentence.isEmpty { Task { await parseAI() } } }
-            Text("AI 会生成可编辑草稿；确认后才会保存到任务列表。")
+                .onSubmit { if hasAIInput { Task { await parseAI() } } }
+            HStack(spacing: AppSpacing.x3) {
+                Button(selectedImageData == nil ? "选择图片" : "更换图片", systemImage: "photo.on.rectangle") {
+                    isChoosingImage = true
+                }
+                if let selectedImageData, let image = NSImage(data: selectedImageData) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 72, height: 72)
+                        .accessibilityLabel("待识别图片预览")
+                    Text(selectedImageName ?? "已选择图片")
+                        .font(.caption)
+                        .lineLimit(2)
+                    Button("移除图片", systemImage: "xmark.circle") {
+                        self.selectedImageData = nil
+                        selectedImageName = nil
+                        imageImportError = nil
+                    }
+                    .labelStyle(.iconOnly)
+                    .accessibilityLabel("移除图片")
+                }
+            }
+            Text("图片和补充说明会发送到设置中的 AI 接口。AI 会生成可编辑的主任务与子任务，确认后才保存。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let imageImportError {
+                Label(imageImportError, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(AppColors.danger)
+            }
             if let feedback {
                 Label(feedback, systemImage: "checkmark.circle.fill")
                     .font(.caption)
@@ -254,13 +292,15 @@ struct TaskComposerView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("直接作为普通待办", systemImage: "arrow.right") {
-                    title = cleanSentence
-                    hasAIDraft = false
-                    mode = .task
-                    focusInput()
+                if !cleanSentence.isEmpty {
+                    Button("直接作为普通待办", systemImage: "arrow.right") {
+                        title = cleanSentence
+                        hasAIDraft = false
+                        mode = .task
+                        focusInput()
+                    }
+                    .buttonStyle(.link)
                 }
-                .buttonStyle(.link)
             }
         }
         .overlay {
@@ -484,7 +524,7 @@ struct TaskComposerView: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: [.command])
-            .disabled(isAIInput ? cleanSentence.isEmpty || store.isAIParsing : cleanTitle.isEmpty)
+            .disabled(isAIInput ? !hasAIInput || store.isAIParsing : cleanTitle.isEmpty)
         }
         .padding(.horizontal, 25)
         .padding(.vertical, 17)
@@ -503,21 +543,26 @@ struct TaskComposerView: View {
         return mode == .completed ? "checkmark" : "plus"
     }
 
+    private var hasAIInput: Bool { !cleanSentence.isEmpty || selectedImageData != nil }
+
     private func focusInput() {
         DispatchQueue.main.async {
+            guard isPresentationActive, !isClosing else { return }
             if isAIInput { sentenceFocused = true }
             else { titleFocused = true }
         }
     }
 
     private func parseAI() async {
-        guard !cleanSentence.isEmpty else { return }
+        guard hasAIInput else { return }
         guard let parsed = await store.parseTask(
             sentence: cleanSentence,
             endpoint: preferences.deepSeekEndpoint,
             model: preferences.deepSeekModel,
             defaultQuadrant: preferences.defaultQuadrant,
-            defaultDuration: preferences.defaultDuration
+            defaultDuration: preferences.defaultDuration,
+            imageData: selectedImageData,
+            visionModel: preferences.deepSeekVisionModel
         ) else { return }
         withAnimation(motion) {
             title = parsed.task.title
@@ -543,7 +588,7 @@ struct TaskComposerView: View {
     }
 
     private func save() {
-        guard !cleanTitle.isEmpty else { return }
+        guard !isClosing, !cleanTitle.isEmpty else { return }
         let normalizedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
         let isCompleted = mode == .completed
         let scheduledFor: Date
@@ -610,6 +655,8 @@ struct TaskComposerView: View {
                 title = ""
                 notes = ""
                 sentence = ""
+                selectedImageData = nil
+                selectedImageName = nil
                 subtasks = []
                 subtaskInput = ""
                 isAddingSubtask = false
@@ -632,7 +679,8 @@ struct TaskComposerView: View {
     }
 
     private func cancel() {
-        if cleanTitle.isEmpty && cleanSubtasks.isEmpty && cleanSentence.isEmpty && notes.isEmpty {
+        guard !isClosing else { return }
+        if cleanTitle.isEmpty && cleanSubtasks.isEmpty && cleanSentence.isEmpty && selectedImageData == nil && notes.isEmpty {
             if keepOpen { navigationTaskID = nil }
             close()
         } else {
@@ -640,5 +688,36 @@ struct TaskComposerView: View {
         }
     }
 
-    private func close() { if let onClose { onClose() } else { dismiss() } }
+    private func close() {
+        guard !isClosing else { return }
+        titleFocused = false
+        sentenceFocused = false
+        subtaskFocused = false
+        dismiss()
+    }
+
+    private func importImage(_ result: Result<URL, Error>) {
+        do {
+            let url = try result.get()
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let sourceData = try Data(contentsOf: url)
+            guard let source = CGImageSourceCreateWithData(sourceData as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 2048
+                  ] as CFDictionary),
+                  let jpeg = NSBitmapImageRep(cgImage: thumbnail).representation(using: .jpeg, properties: [.compressionFactor: 0.8]),
+                  jpeg.count <= 8_000_000 else {
+                throw NSError(domain: "图片导入", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法读取这张图片，请选择常见格式的图片重试。"])
+            }
+            selectedImageData = jpeg
+            selectedImageName = url.lastPathComponent
+            imageImportError = nil
+            store.aiTaskError = nil
+        } catch {
+            imageImportError = "图片导入失败：\(error.localizedDescription)"
+        }
+    }
 }

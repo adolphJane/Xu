@@ -291,13 +291,15 @@ struct UpdateManifest: Codable, Equatable {
     var version: String
     var downloadURL: String
     var notes: String
-    var sha256: String?
+    var sha256: String
+    var releaseURL: String
+    var isPrerelease: Bool
 }
 
 enum CommandPaletteAction: String, CaseIterable, Identifiable {
     case addTask = "新增待办事项"
     case addCompleted = "记录已完成事项"
-    case aiTask = "AI 一句话生成任务"
+    case aiTask = "AI 生成任务"
     case aiBlueprint = "AI 生成完整蓝图"
     case dailyReport = "生成今日日报"
     case openToday = "打开今日"
@@ -380,5 +382,6 @@ enum TodayBlueprintOrganizer {
 
 extension Notification.Name {
     static let showCommandPalette = Notification.Name("sequence.showCommandPalette")
+    static let runCommandFromSettings = Notification.Name("sequence.runCommandFromSettings")
     static let showTaskComposer = Notification.Name("sequence.showTaskComposer")
 }

@@ -103,7 +103,7 @@ struct BlueprintWorkflowView: View {
         .overlay(alignment: .top) {
             if isQuickAdding { quickAddBar.padding(.top, 58).zIndex(20) }
         }
-        .sheet(isPresented: $isBulkAdding) {
+        .appDialog(isPresented: $isBulkAdding) {
             WorkflowBulkAddView { titles, parallel in
                 withHistory {
                     var source = selectedID
@@ -116,7 +116,7 @@ struct BlueprintWorkflowView: View {
                 }
             }
         }
-        .popover(isPresented: $isExistingPickerShowing, arrowEdge: .bottom) {
+        .appDialog(isPresented: $isExistingPickerShowing) {
             WorkflowExistingTaskPicker(blueprint: blueprint) { task in
                 withHistory { store.assign(task, to: blueprint, showMessage: false) }
                 if store.tasks.first(where: { $0.id == task.id })?.blueprintID == blueprint.id {
@@ -124,9 +124,9 @@ struct BlueprintWorkflowView: View {
                 }
             }
         }
-        .sheet(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprint.id) }
-        .sheet(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprint.id, stage: $0) }
-        .sheet(item: $editingTask) { TaskEditor(task: $0) }
+        .appDialog(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprint.id) }
+        .appDialog(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprint.id, stage: $0) }
+        .appDialog(item: $editingTask) { TaskEditor(task: $0) }
         .onChange(of: isQuickAdding) { _, value in if value { quickFocused = true } }
         .onAppear { if let focusTaskID { selectedID = focusTaskID } }
         .onChange(of: focusTaskID) { _, newValue in if let newValue { selectedID = newValue } }
@@ -653,11 +653,14 @@ private struct WorkflowNodeCard: View {
         .onTapGesture(perform: onSelect)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(task.title)，\(stateText)")
-        .alert("标记阻塞", isPresented: $isBlocking) {
-            TextField("阻塞原因", text: $blockReason)
-            Button("确认") { onMutation { store.block(task, reason: blockReason) }; blockReason = "" }
-            Button("取消", role: .cancel) { blockReason = "" }
-        } message: { Text("记录阻塞原因，方便之后继续执行。") }
+        .appDialog(isPresented: $isBlocking) {
+            AppTextInputDialog(title: "标记阻塞", message: "记录阻塞原因，方便之后继续执行。",
+                               prompt: "阻塞原因", text: $blockReason, primaryTitle: "确认") { value in
+                onMutation { store.block(task, reason: value) }
+                blockReason = ""
+                return nil
+            }
+        }
     }
 }
 
@@ -667,6 +670,7 @@ private struct WorkflowInspector: View {
     let blueprintID: UUID
     let onSelect: (UUID) -> Void
     let onEdit: () -> Void
+    @State private var isAddingChild = false
     let onDeleted: () -> Void
     let onMutation: (() -> Void) -> Void
     @State private var title: String
@@ -785,6 +789,7 @@ private struct WorkflowInspector: View {
                     }
                 }
                 Divider()
+                Button("添加子任务", systemImage: "plus") { isAddingChild = true }
                 Button("完整任务设置", systemImage: "slider.horizontal.3", action: onEdit)
                 Button("删除节点", systemImage: "trash", role: .destructive) { isDeleteConfirming = true }
             }
@@ -796,13 +801,14 @@ private struct WorkflowInspector: View {
             return true
         } isTargeted: { isDropTarget = $0 }
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(isDropTarget ? .blue : .clear, lineWidth: 2))
-        .sheet(item: $enlargedImage) { image in
+        .appDialog(item: $enlargedImage) { image in
             VStack {
                 HStack { Text(image.name).font(.headline); Spacer(); Button("关闭") { enlargedImage = nil } }
                 if let nsImage = image.nsImage { Image(nsImage: nsImage).resizable().scaledToFit() }
             }
             .padding(20).frame(minWidth: 560, minHeight: 440)
         }
+        .appDialog(isPresented: $isAddingChild) { TaskChildQuickAddView(parentTaskID: task.id) }
         .confirmationDialog("回退后续任务？", isPresented: $isRollbackConfirming) {
             Button("回退当前及所有后续任务", role: .destructive) { onMutation { store.rollbackWorkflow(from: task) } }
         } message: {
@@ -828,7 +834,7 @@ private struct WorkflowInspector: View {
                 }
             }
         } message: {
-            Text("节点对应的任务也会删除。后续节点会按所选方式更新依赖。")
+            Text("节点对应的任务也会删除；它的直接子任务会归属到上一层，后续节点按所选方式更新依赖。")
         }
     }
 
@@ -869,7 +875,7 @@ private struct WorkflowInspector: View {
 }
 
 private struct WorkflowBulkAddView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @State private var text = ""
     @State private var parallel = false
     let onAdd: ([String], Bool) -> Void
@@ -898,7 +904,7 @@ private struct WorkflowBulkAddView: View {
 }
 
 private struct WorkflowExistingTaskPicker: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprint: BlueprintItem
     let onAdded: (TaskItem) -> Void
@@ -919,7 +925,7 @@ private struct WorkflowExistingTaskPicker: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(task.title)
-                        Text(task.effectiveStatus.title).font(.caption).foregroundStyle(.secondary)
+                        Text(task.displayStatusTitle).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("加入") {

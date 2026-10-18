@@ -90,6 +90,7 @@ final class AppPreferences: ObservableObject {
     @Published var dailyReviewEnabled: Bool { didSet { save(dailyReviewEnabled, key: "dailyReviewEnabled") } }
     @Published var dailyReviewTime: Date { didSet { save(dailyReviewTime.timeIntervalSinceReferenceDate, key: "dailyReviewTime") } }
     @Published var deepSeekModel: String { didSet { save(deepSeekModel, key: "deepSeekModel") } }
+    @Published var deepSeekVisionModel: String { didSet { save(deepSeekVisionModel, key: "deepSeekVisionModel") } }
     @Published var deepSeekEndpoint: String { didSet { save(deepSeekEndpoint, key: "deepSeekEndpoint") } }
     @Published var themePreset: ThemePreset { didSet { save(themePreset.rawValue, key: "themePreset") } }
     @Published var customAccentHex: String { didSet { save(customAccentHex, key: "customAccentHex") } }
@@ -117,10 +118,11 @@ final class AppPreferences: ObservableObject {
     @Published var syncEnabled: Bool { didSet { save(syncEnabled, key: "syncEnabled") } }
     @Published var syncFolderPath: String { didSet { save(syncFolderPath, key: "syncFolderPath") } }
     @Published var calendarIntegrationEnabled: Bool { didSet { save(calendarIntegrationEnabled, key: "calendarIntegrationEnabled") } }
-    @Published var updateManifestURL: String { didSet { save(updateManifestURL, key: "updateManifestURL") } }
     @Published var autoCheckUpdates: Bool { didSet { save(autoCheckUpdates, key: "autoCheckUpdates") } }
     @Published var availableUpdate: UpdateManifest?
     @Published var isCheckingUpdate = false
+    @Published var isInstallingUpdate = false
+    @Published var shouldPresentUpdatePrompt = false
     @Published var updateStatus: String?
 
     var resolvedPreset: ThemePreset {
@@ -179,6 +181,7 @@ final class AppPreferences: ObservableObject {
         let savedTime = defaults.double(forKey: "dailyReviewTime")
         dailyReviewTime = savedTime == 0 ? Calendar.current.date(bySettingHour: 21, minute: 30, second: 0, of: .now) ?? .now : Date(timeIntervalSinceReferenceDate: savedTime)
         deepSeekModel = defaults.string(forKey: "deepSeekModel") ?? "deepseek-chat"
+        deepSeekVisionModel = defaults.string(forKey: "deepSeekVisionModel") ?? "deepseek-flash"
         deepSeekEndpoint = defaults.string(forKey: "deepSeekEndpoint") ?? "https://api.deepseek.com/chat/completions"
         themePreset = ThemePreset(rawValue: defaults.string(forKey: "themePreset") ?? "") ?? .stone
         customAccentHex = defaults.string(forKey: "customAccentHex") ?? ""
@@ -209,7 +212,6 @@ final class AppPreferences: ObservableObject {
         syncEnabled = defaults.bool(forKey: "syncEnabled")
         syncFolderPath = defaults.string(forKey: "syncFolderPath") ?? ""
         calendarIntegrationEnabled = defaults.bool(forKey: "calendarIntegrationEnabled")
-        updateManifestURL = defaults.string(forKey: "updateManifestURL") ?? ""
         autoCheckUpdates = defaults.bool(forKey: "autoCheckUpdates")
         availableUpdate = nil
     }
@@ -391,6 +393,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var isComplete = false
     var status: TaskStatus? = nil
     var completedAt: Date?
+    var autoCompletedAt: Date? = nil
     var createdAt: Date = .now
     var blueprintID: UUID? = nil
     var stageID: UUID? = nil
@@ -409,6 +412,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
 
     var effectiveReportCategory: ReportCategory { reportCategory ?? .projectProgress }
     var effectiveStatus: TaskStatus { status ?? (isComplete ? .completed : .pending) }
+    var displayStatusTitle: String { isCompleted && autoCompletedAt != nil ? "自动完成" : effectiveStatus.title }
     var isPending: Bool { effectiveStatus == .pending }
     var needsAction: Bool { !isCompleted && !isCancelled }
     var isInProgress: Bool { effectiveStatus == .inProgress }
@@ -527,6 +531,7 @@ final class TaskStore: ObservableObject {
         }
         apiKey = KeychainStore.load(account: "deepseek-api-key") ?? ""
         categories = Self.normalizedCategories(categories + tasks.compactMap(\.category))
+        reconcileCompletedParents()
         for anniversary in anniversaries {
             Task { await AnniversaryNotifications.configure(anniversary) }
         }
@@ -607,6 +612,16 @@ final class TaskStore: ObservableObject {
     func add(_ task: TaskItem) {
         var task = task
         task.category = resolvedCategory(task.category)
+        guard TaskTreeProjection.canAssignParent(task.parentTaskID, to: task.id, in: tasks),
+              !tasks.contains(where: { $0.id == task.id }) else {
+            actionMessage = "任务归属无效，请重新选择父任务。"
+            return
+        }
+        if let parentID = task.parentTaskID,
+           tasks.first(where: { $0.id == parentID })?.blueprintID != task.blueprintID {
+            actionMessage = "子任务与父任务必须属于同一蓝图。"
+            return
+        }
         if let error = WorkflowGraph.validationError(task: task, dependencies: task.effectiveDependencyIDs, tasks: tasks) {
             actionMessage = error
             return
@@ -615,8 +630,49 @@ final class TaskStore: ObservableObject {
             actionMessage = reason
             return
         }
-        tasks.insert(task, at: 0)
+        var updated = tasks
+        updated.insert(task, at: 0)
+        if let parentID = task.parentTaskID, !task.isCompleted {
+            let autoAncestors = Array(TaskTreeProjection.path(to: parentID, in: updated).reversed()
+                .prefix { $0.isCompleted && $0.autoCompletedAt != nil })
+            for ancestor in autoAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
+                actionMessage = "请先回退“\(ancestor.title)”的后续任务，再添加子任务。"
+                return
+            }
+            let changedAt = Date()
+            for ancestor in autoAncestors {
+                guard let index = updated.firstIndex(where: { $0.id == ancestor.id }) else { continue }
+                updated[index].status = .pending
+                updated[index].isComplete = false
+                updated[index].completedAt = nil
+                updated[index].autoCompletedAt = nil
+                updated[index].statusChangedAt = changedAt
+            }
+        }
+        tasks = updated
         if let category = task.category { addCategory(category) }
+    }
+
+    /// Adds a child to any existing task while preserving its planning context.
+    @discardableResult
+    func addChild(title: String, to parentID: UUID, notes: String = "") -> Bool {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let parent = tasks.first(where: { $0.id == parentID }) else {
+            actionMessage = "父任务不存在或子任务名称为空。"
+            return false
+        }
+        let child = TaskItem(
+            title: name, notes: notes, project: parent.project, category: parent.category,
+            reportCategory: parent.reportCategory, quadrant: parent.quadrant,
+            scheduledFor: parent.scheduledFor, dueDate: parent.dueDate,
+            estimatedMinutes: parent.estimatedMinutes,
+            status: parent.isUnscheduled ? .unscheduled : .pending,
+            blueprintID: parent.blueprintID, stageID: parent.stageID,
+            milestoneID: parent.milestoneID, parentTaskID: parent.id
+        )
+        let previousCount = tasks.count
+        add(child)
+        return tasks.count == previousCount + 1
     }
 
     /// Saves one task tree as a single collection update, after validating every task.
@@ -626,7 +682,7 @@ final class TaskStore: ObservableObject {
         let incomingIDs = incoming.map(\.id)
         guard Set(incomingIDs).count == incoming.count,
               incomingIDs.allSatisfy({ id in !tasks.contains(where: { $0.id == id }) }),
-              children.allSatisfy({ $0.parentTaskID == parent.id }) else {
+              children.allSatisfy({ $0.parentTaskID == parent.id && $0.blueprintID == parent.blueprintID }) else {
             actionMessage = "任务结构无效，请重试。"
             return false
         }
@@ -658,6 +714,22 @@ final class TaskStore: ObservableObject {
         let previousBlueprintID = previous.blueprintID
         var updated = task
         updated.category = resolvedCategory(updated.category)
+        if !updated.isCompleted { updated.autoCompletedAt = nil }
+        guard !updated.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              TaskTreeProjection.canAssignParent(updated.parentTaskID, to: updated.id, in: tasks) else {
+            actionMessage = "任务名称或父任务归属无效。"
+            return false
+        }
+        if let parentID = updated.parentTaskID,
+           tasks.first(where: { $0.id == parentID })?.blueprintID != updated.blueprintID {
+            actionMessage = "子任务与父任务必须属于同一蓝图。"
+            return false
+        }
+        if previousBlueprintID != updated.blueprintID,
+           !TaskTreeProjection.descendants(of: updated.id, in: tasks).isEmpty {
+            actionMessage = "请先处理下级任务的蓝图归属，再移动这项任务。"
+            return false
+        }
         if updated.workflowX == nil { updated.workflowX = previous.workflowX }
         if updated.workflowY == nil { updated.workflowY = previous.workflowY }
         if updated.workflowImages == nil { updated.workflowImages = previous.workflowImages }
@@ -691,7 +763,85 @@ final class TaskStore: ObservableObject {
     }
 
     func markCompleted(_ task: TaskItem) {
-        setStatus(task, to: .completed)
+        guard let current = tasks.first(where: { $0.id == task.id }) else { return }
+        if current.isCancelled {
+            actionMessage = "请先恢复已取消的任务。"
+            return
+        }
+
+        // Validate the full hierarchy against a working copy, so a blocked child
+        // cannot leave its parent and siblings partially completed.
+        var updated = tasks
+        let descendants = TaskTreeProjection.descendants(of: current.id, in: tasks)
+        var remaining = ([current] + descendants).filter { !$0.isCompleted && !$0.isCancelled }.map(\.id)
+        let completedAt = Date()
+        while !remaining.isEmpty {
+            var progressed = false
+            for id in remaining {
+                guard let index = updated.firstIndex(where: { $0.id == id }),
+                      WorkflowGraph.blockingReason(for: updated[index], tasks: updated, blueprints: blueprints) == nil else { continue }
+                updated[index].status = .completed
+                updated[index].isComplete = true
+                updated[index].completedAt = completedAt
+                updated[index].autoCompletedAt = id == current.id ? nil : completedAt
+                updated[index].statusChangedAt = completedAt
+                updated[index].blockReason = nil
+                remaining.removeAll { $0 == id }
+                progressed = true
+            }
+            if !progressed {
+                guard let blocked = updated.first(where: { remaining.contains($0.id) && $0.effectiveStatus == .blocked })
+                    ?? updated.first(where: { remaining.contains($0.id) }) else { return }
+                let reason = WorkflowGraph.blockingReason(for: blocked, tasks: updated, blueprints: blueprints)
+                    ?? "请检查任务的前置条件。"
+                actionMessage = "无法完成“\(blocked.title)”：\(reason)"
+                return
+            }
+        }
+        autoCompleteAncestors(of: current.id, in: &updated, at: completedAt)
+        if updated != tasks { tasks = updated }
+    }
+
+    private func autoCompleteAncestors(of taskID: UUID, in updated: inout [TaskItem], at date: Date) {
+        let ancestors = TaskTreeProjection.path(to: taskID, in: updated).dropLast().reversed()
+        for ancestor in ancestors {
+            let children = TaskTreeProjection.directChildren(of: ancestor.id, in: updated)
+            guard !children.isEmpty, children.allSatisfy(\.isCompleted) else { break }
+            guard let index = updated.firstIndex(where: { $0.id == ancestor.id }) else { break }
+            if updated[index].isCompleted { continue }
+            if let reason = WorkflowGraph.blockingReason(for: updated[index], tasks: updated, blueprints: blueprints) {
+                actionMessage = "子任务已完成，但“\(ancestor.title)”无法自动完成：\(reason)"
+                break
+            }
+            Self.completeAutomatically(&updated[index], at: date)
+        }
+    }
+
+    /// Reconciles older task data that already has every child completed.
+    func reconcileCompletedParents() {
+        var updated = tasks
+        let completedAt = Date()
+        var changed = false
+        repeat {
+            changed = false
+            for index in updated.indices where !updated[index].isCompleted {
+                let children = TaskTreeProjection.directChildren(of: updated[index].id, in: updated)
+                guard !children.isEmpty, children.allSatisfy(\.isCompleted),
+                      WorkflowGraph.blockingReason(for: updated[index], tasks: updated, blueprints: blueprints) == nil else { continue }
+                Self.completeAutomatically(&updated[index], at: completedAt)
+                changed = true
+            }
+        } while changed
+        if updated != tasks { tasks = updated }
+    }
+
+    private static func completeAutomatically(_ task: inout TaskItem, at date: Date) {
+        task.status = .completed
+        task.isComplete = true
+        task.completedAt = date
+        task.autoCompletedAt = date
+        task.statusChangedAt = date
+        task.blockReason = nil
     }
 
     func start(_ task: TaskItem) {
@@ -715,9 +865,31 @@ final class TaskStore: ObservableObject {
     func restore(_ task: TaskItem) {
         guard let current = tasks.first(where: { $0.id == task.id }) else { return }
         if current.isCompleted {
-            let active = WorkflowGraph.descendants(of: task.id, tasks: tasks).filter { $0.isInProgress || $0.isCompleted }
+            let batchChildren = TaskTreeProjection.descendants(of: current.id, in: tasks).filter {
+                guard let completedAt = current.completedAt, current.autoCompletedAt == nil else { return false }
+                return $0.isCompleted && $0.autoCompletedAt == completedAt
+            }
+            let autoAncestors = Array(TaskTreeProjection.path(to: current.id, in: tasks).dropLast().reversed()
+                .prefix { $0.isCompleted && $0.autoCompletedAt != nil })
+            let affected = Set(batchChildren.map(\.id)).union(autoAncestors.map(\.id)).union([current.id])
+            let active = affected.flatMap { WorkflowGraph.descendants(of: $0, tasks: tasks) }
+                .filter { !affected.contains($0.id) && ($0.isInProgress || $0.isCompleted) }
             if !active.isEmpty {
                 actionMessage = "请先回退后续任务：\(active.map(\.title).joined(separator: "、"))。"
+                return
+            }
+            if !batchChildren.isEmpty {
+                var updated = tasks
+                let changedAt = Date()
+                for index in updated.indices where affected.contains(updated[index].id) {
+                    updated[index].status = .pending
+                    updated[index].isComplete = false
+                    updated[index].completedAt = nil
+                    updated[index].autoCompletedAt = nil
+                    updated[index].statusChangedAt = changedAt
+                    updated[index].blockReason = nil
+                }
+                tasks = updated
                 return
             }
         }
@@ -733,6 +905,7 @@ final class TaskStore: ObservableObject {
             updated[index].status = .pending
             updated[index].isComplete = false
             updated[index].completedAt = nil
+            updated[index].autoCompletedAt = nil
             updated[index].startedAt = nil
             updated[index].blockReason = nil
             updated[index].statusChangedAt = .now
@@ -778,11 +951,31 @@ final class TaskStore: ObservableObject {
             actionMessage = reason
             return
         }
-        tasks[index].status = status
-        tasks[index].isComplete = status == .completed
-        tasks[index].completedAt = status == .completed ? .now : nil
-        tasks[index].statusChangedAt = .now
-        if status != .blocked { tasks[index].blockReason = nil }
+        let autoAncestors = status == .completed ? [] : Array(
+            TaskTreeProjection.path(to: task.id, in: tasks).dropLast().reversed()
+                .prefix { $0.isCompleted && $0.autoCompletedAt != nil }
+        )
+        for ancestor in autoAncestors where !activeWorkflowDescendants(of: ancestor.id).isEmpty {
+            actionMessage = "请先回退“\(ancestor.title)”的后续任务，再更改此任务状态。"
+            return
+        }
+        var updated = tasks
+        let changedAt = Date()
+        updated[index].status = status
+        updated[index].isComplete = status == .completed
+        updated[index].completedAt = status == .completed ? changedAt : nil
+        updated[index].autoCompletedAt = nil
+        updated[index].statusChangedAt = changedAt
+        if status != .blocked { updated[index].blockReason = nil }
+        for ancestor in autoAncestors {
+            guard let ancestorIndex = updated.firstIndex(where: { $0.id == ancestor.id }) else { continue }
+            updated[ancestorIndex].status = .pending
+            updated[ancestorIndex].isComplete = false
+            updated[ancestorIndex].completedAt = nil
+            updated[ancestorIndex].autoCompletedAt = nil
+            updated[ancestorIndex].statusChangedAt = changedAt
+        }
+        tasks = updated
     }
 
     private func activeWorkflowDescendants(of taskID: UUID) -> [TaskItem] {
@@ -803,12 +996,16 @@ final class TaskStore: ObservableObject {
             actionMessage = "请先移除“\(successors.map(\.title).joined(separator: "、"))”的前置连线，再删除任务。"
             return
         }
-        tasks.removeAll { $0.id == task.id }
-        for index in tasks.indices {
-            tasks[index].dependencyIDs?.removeAll { $0 == task.id }
-            if tasks[index].dependencyIDs?.isEmpty == true { tasks[index].dependencyIDs = nil }
-            if tasks[index].parentTaskID == task.id { tasks[index].parentTaskID = nil }
+        var updated = tasks.filter { $0.id != task.id }
+        let replacementParentID = task.parentTaskID.flatMap { parentID in
+            updated.contains(where: { $0.id == parentID }) ? parentID : nil
         }
+        for index in updated.indices {
+            updated[index].dependencyIDs?.removeAll { $0 == task.id }
+            if updated[index].dependencyIDs?.isEmpty == true { updated[index].dependencyIDs = nil }
+            if updated[index].parentTaskID == task.id { updated[index].parentTaskID = replacementParentID }
+        }
+        tasks = updated
         for index in anniversaries.indices where anniversaries[index].generatedTaskID == task.id {
             anniversaries[index].generatedTaskID = nil
         }
@@ -818,8 +1015,11 @@ final class TaskStore: ObservableObject {
     func removeWorkflowNode(_ task: TaskItem, reconnect: Bool) -> Bool {
         guard let current = tasks.first(where: { $0.id == task.id }) else { return false }
         var updated = tasks.filter { $0.id != current.id }
+        let replacementParentID = current.parentTaskID.flatMap { parentID in
+            updated.contains(where: { $0.id == parentID }) ? parentID : nil
+        }
         for index in updated.indices {
-            if updated[index].parentTaskID == current.id { updated[index].parentTaskID = nil }
+            if updated[index].parentTaskID == current.id { updated[index].parentTaskID = replacementParentID }
             guard updated[index].effectiveDependencyIDs.contains(current.id) else { continue }
             var dependencies = updated[index].effectiveDependencyIDs.filter { $0 != current.id }
             if reconnect {
@@ -1260,10 +1460,12 @@ final class TaskStore: ObservableObject {
         endpoint: String,
         model: String,
         defaultQuadrant: Quadrant,
-        defaultDuration: Int
+        defaultDuration: Int,
+        imageData: Data? = nil,
+        visionModel: String? = nil
     ) async -> ParsedTask? {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            aiTaskError = "请先在设置中填写 DeepSeek API Key，或将原句直接转为普通待办。"
+            aiTaskError = "请先在设置中填写 DeepSeek API Key。"
             return nil
         }
         isAIParsing = true
@@ -1273,16 +1475,37 @@ final class TaskStore: ObservableObject {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let prompt = """
         你是任务解析器。当前时间为 \(formatter.string(from: .now))，时区为 \(TimeZone.current.identifier)。
-        将用户的一句话解析成 JSON，只返回 JSON，不要 Markdown。缺失信息使用 null，不要编造项目。
-        JSON 字段：title(String), project(String|null), quadrant(String|null，限 doNow/schedule/delegate/eliminate), reportCategory(String|null，限 projectProgress/collaboration), scheduledFor(String|null，ISO8601), dueDate(String|null，ISO8601), estimatedMinutes(Int|null), notes(String|null), subtasks([String]|null，最多5项)。
-        用户输入：\(sentence)
+        \(imageData == nil ? "将用户的描述解析为任务。" : "根据用户提供的图片识别真实内容，整理成一个主任务和若干不同的、具体可执行的子任务。只依据图片及补充说明，不猜测看不清的文字、日期或项目；忽略与任务无关的内容。若图片没有明确行动项，可合理拆分可见目标。")
+        只返回 JSON，不要 Markdown。缺失信息使用 null，不要编造项目。
+        JSON 字段：title(String), project(String|null), quadrant(String|null，限 doNow/schedule/delegate/eliminate), reportCategory(String|null，限 projectProgress/collaboration), scheduledFor(String|null，ISO8601), dueDate(String|null，ISO8601), estimatedMinutes(Int|null), notes(String|null), subtasks([String]|null，最多8项；图片输入至少1项，子任务不得重复主任务或彼此重复)。
+        用户补充说明：\(sentence.isEmpty ? "无" : sentence)
         """
         do {
-            let content = try await DeepSeekService.generateReport(apiKey: apiKey, endpoint: endpoint, model: model, prompt: prompt)
+            let content: String
+            if let imageData {
+                content = try await DeepSeekService.generateWithImage(
+                    apiKey: apiKey, endpoint: endpoint, model: visionModel ?? "deepseek-flash",
+                    prompt: prompt, jpegData: imageData
+                )
+            } else {
+                content = try await DeepSeekService.generateReport(apiKey: apiKey, endpoint: endpoint, model: model, prompt: prompt)
+            }
             let payload = try AITaskPayload.decode(from: content)
+            let task = payload.makeTask(defaultQuadrant: defaultQuadrant, defaultDuration: defaultDuration)
+            guard !task.title.isEmpty else {
+                throw NSError(domain: "AI task", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片中未识别出可用的主任务，请补充说明后重试。"])
+            }
+            let children = Array((payload.subtasks ?? [])
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && $0.localizedCaseInsensitiveCompare(task.title) != .orderedSame }
+                .uniquedTaskTitles()
+                .prefix(8))
+            guard imageData == nil || !children.isEmpty else {
+                throw NSError(domain: "AI task", code: 4, userInfo: [NSLocalizedDescriptionKey: "图片中未识别出可用的子任务，请补充说明后重试。"])
+            }
             return ParsedTask(
-                task: payload.makeTask(defaultQuadrant: defaultQuadrant, defaultDuration: defaultDuration),
-                subtasks: Array((payload.subtasks ?? []).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.prefix(5))
+                task: task,
+                subtasks: children
             )
         } catch {
             aiTaskError = "AI 解析失败：\(error.localizedDescription)"
@@ -1436,6 +1659,21 @@ enum DeepSeekService {
         struct Message: Decodable { let content: String }
     }
 
+    private struct ImageRequestBody: Encodable {
+        let model: String
+        let messages: [ImageMessage]
+        struct ImageMessage: Encodable {
+            let role: String
+            let content: [ContentPart]
+        }
+        struct ContentPart: Encodable {
+            let type: String
+            let text: String?
+            let image_url: ImageURL?
+        }
+        struct ImageURL: Encodable { let url: String }
+    }
+
     static func generateReport(apiKey: String, endpoint: String, model: String, prompt: String) async throws -> String {
         guard let url = URL(string: endpoint), let scheme = url.scheme, ["https", "http"].contains(scheme) else {
             throw URLError(.badURL)
@@ -1453,6 +1691,41 @@ enum DeepSeekService {
             throw NSError(domain: "DeepSeek", code: 2, userInfo: [NSLocalizedDescriptionKey: "DeepSeek 未返回日报内容。"])
         }
         return content
+    }
+
+    static func generateWithImage(apiKey: String, endpoint: String, model: String, prompt: String, jpegData: Data) async throws -> String {
+        guard let url = URL(string: endpoint), url.scheme == "https" else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try imageRequestBody(model: model, prompt: prompt, jpegData: jpegData)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "DeepSeek", code: 3, userInfo: [NSLocalizedDescriptionKey: "图片识别请求失败，请检查图片模型、API Key 和网络连接。"])
+        }
+        guard let content = try JSONDecoder().decode(ResponseBody.self, from: data).choices.first?.message.content else {
+            throw NSError(domain: "DeepSeek", code: 4, userInfo: [NSLocalizedDescriptionKey: "图片模型未返回任务内容。"])
+        }
+        return content
+    }
+
+    static func imageRequestBody(model: String, prompt: String, jpegData: Data) throws -> Data {
+        let imageURL = "data:image/jpeg;base64,\(jpegData.base64EncodedString())"
+        let body = ImageRequestBody(model: model, messages: [
+            .init(role: "user", content: [
+                .init(type: "text", text: prompt, image_url: nil),
+                .init(type: "image_url", text: nil, image_url: .init(url: imageURL))
+            ])
+        ])
+        return try JSONEncoder().encode(body)
+    }
+}
+
+private extension Array where Element == String {
+    func uniquedTaskTitles() -> [String] {
+        var seen = Set<String>()
+        return filter { seen.insert($0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)).inserted }
     }
 }
 

@@ -3,6 +3,21 @@ import XCTest
 
 @MainActor
 final class PhaseOneTests: XCTestCase {
+    func testImageTaskRequestKeepsPromptAndJPEGInUserMessage() throws {
+        let image = Data([0xFF, 0xD8, 0xFF])
+        let data = try DeepSeekService.imageRequestBody(model: "deepseek-flash", prompt: "整理图片中的事项", jpegData: image)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "deepseek-flash")
+        let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertEqual(messages[0]["role"] as? String, "user")
+        let content = try XCTUnwrap(messages[0]["content"] as? [[String: Any]])
+        XCTAssertEqual(content.map { $0["type"] as? String }, ["text", "image_url"])
+        XCTAssertEqual(content[0]["text"] as? String, "整理图片中的事项")
+        let imagePart = try XCTUnwrap(content[1]["image_url"] as? [String: String])
+        XCTAssertEqual(imagePart["url"], "data:image/jpeg;base64,/9j/")
+    }
+
     func testSwiftDataRoundTrip() throws {
         let persistence = try PersistenceController(inMemory: true)
         let task = TaskItem(

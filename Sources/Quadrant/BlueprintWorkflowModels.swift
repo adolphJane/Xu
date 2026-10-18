@@ -124,6 +124,30 @@ enum WorkflowGraph {
 
 /// A read-only task hierarchy used by blueprint presentations.
 enum TaskTreeProjection {
+    static func directChildren(of parentID: UUID, in tasks: [TaskItem]) -> [TaskItem] {
+        tasks.filter { $0.parentTaskID == parentID && $0.id != parentID }
+            .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
+    }
+
+    /// Existing ancestors followed by the task itself. Broken links stop at the last known task.
+    static func path(to taskID: UUID, in tasks: [TaskItem]) -> [TaskItem] {
+        let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [TaskItem] = []
+        var current: UUID? = taskID
+        var seen = Set<UUID>()
+        while let id = current, seen.insert(id).inserted, let task = byID[id] {
+            result.append(task)
+            current = task.parentTaskID
+        }
+        return result.reversed()
+    }
+
+    static func canAssignParent(_ parentID: UUID?, to taskID: UUID, in tasks: [TaskItem]) -> Bool {
+        guard let parentID else { return true }
+        guard parentID != taskID, tasks.contains(where: { $0.id == parentID }) else { return false }
+        return !descendants(of: taskID, in: tasks).contains { $0.id == parentID }
+    }
+
     /// Finds the topmost existing parent; broken links and cycles stay navigable.
     static func rootID(containing taskID: UUID, in tasks: [TaskItem]) -> UUID {
         let byID = Dictionary(tasks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -149,8 +173,7 @@ enum TaskTreeProjection {
         var frontier = [rootID]
         while !frontier.isEmpty {
             let parentID = frontier.removeFirst()
-            let children = tasks.filter { $0.parentTaskID == parentID }
-                .sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }
+            let children = directChildren(of: parentID, in: tasks)
             for child in children where seen.insert(child.id).inserted {
                 result.append(child)
                 frontier.append(child.id)

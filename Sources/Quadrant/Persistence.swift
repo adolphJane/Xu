@@ -77,6 +77,7 @@ final class StoredTask {
     var estimatedMinutes: Int
     var statusRaw: String
     var completedAt: Date?
+    var autoCompletedAt: Date?
     var createdAt: Date
     var blueprintID: UUID?
     var stageID: UUID?
@@ -106,6 +107,7 @@ final class StoredTask {
         estimatedMinutes = item.estimatedMinutes
         statusRaw = item.effectiveStatus.rawValue
         completedAt = item.completedAt
+        autoCompletedAt = item.autoCompletedAt
         createdAt = item.createdAt
         blueprintID = item.blueprintID
         stageID = item.stageID
@@ -135,6 +137,7 @@ final class StoredTask {
         estimatedMinutes = item.estimatedMinutes
         statusRaw = item.effectiveStatus.rawValue
         completedAt = item.completedAt
+        autoCompletedAt = item.autoCompletedAt
         createdAt = item.createdAt
         blueprintID = item.blueprintID
         stageID = item.stageID
@@ -169,6 +172,7 @@ final class StoredTask {
             isComplete: statusRaw == TaskStatus.completed.rawValue,
             status: TaskStatus(rawValue: statusRaw) ?? .pending,
             completedAt: completedAt,
+            autoCompletedAt: autoCompletedAt,
             createdAt: createdAt,
             blueprintID: blueprintID,
             stageID: stageID,

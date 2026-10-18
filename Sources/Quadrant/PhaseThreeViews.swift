@@ -3,7 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CommandPaletteView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
+    @Environment(\.appDialogPresentation) private var dialogPresentation
     @State private var query = ""
     @FocusState private var queryFocused: Bool
     let perform: (CommandPaletteAction) -> Void
@@ -28,7 +29,11 @@ struct CommandPaletteView: View {
                 LazyVStack(spacing: 5) {
                     ForEach(commands) { command in
                         Button {
-                            dismiss(); perform(command)
+                            if let dialogPresentation {
+                                dialogPresentation.dismiss { perform(command) }
+                            } else {
+                                dismiss(); perform(command)
+                            }
                         } label: {
                             HStack {
                                 Image(systemName: command.icon).frame(width: 26)
@@ -45,7 +50,7 @@ struct CommandPaletteView: View {
 }
 
 struct AIBlueprintCreatorView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @State private var goal = ""
@@ -162,7 +167,7 @@ struct AIBlueprintCreatorView: View {
 }
 
 struct AIReplanView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     let blueprint: BlueprintItem
@@ -225,7 +230,7 @@ struct AIReplanView: View {
 }
 
 struct PlanChangeHistoryView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @State private var errorMessage: String?
 
@@ -253,7 +258,7 @@ struct PlanChangeHistoryView: View {
 }
 
 struct SyncConflictView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     let conflict: SyncConflict
@@ -331,14 +336,21 @@ struct DataIntegrationSettingsView: View {
             }
             Section("自动更新") {
                 Toggle("启动时自动检查", isOn: $preferences.autoCheckUpdates)
-                TextField("更新清单 URL", text: $preferences.updateManifestURL)
+                LabeledContent("当前版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知")
                 Button(preferences.isCheckingUpdate ? "正在检查…" : "检查更新") { Task { await preferences.checkForUpdates() } }
-                    .disabled(preferences.isCheckingUpdate)
+                    .disabled(preferences.isCheckingUpdate || preferences.isInstallingUpdate)
                 if let status = preferences.updateStatus { Text(status).foregroundStyle(.secondary) }
-                if let update = preferences.availableUpdate, let url = URL(string: update.downloadURL) {
-                    Link("下载版本 \(update.version)", destination: url)
-                    Text(update.notes).font(.caption)
+                if let update = preferences.availableUpdate, let url = URL(string: update.releaseURL) {
+                    LabeledContent("可用版本", value: "\(update.version)\(update.isPrerelease ? "（预发布）" : "")")
+                    if !update.notes.isEmpty { Text(update.notes).font(.caption).textSelection(.enabled) }
+                    Link("查看 GitHub Release", destination: url)
+                    Button(preferences.isInstallingUpdate ? "正在安装…" : "下载并安装更新") {
+                        Task { await preferences.downloadAndInstallUpdate() }
+                    }
+                    .disabled(preferences.isInstallingUpdate || preferences.isCheckingUpdate)
                 }
+                Text("从项目 GitHub Releases 获取更新；下载后校验文件。当前目录不可写时会打开 DMG 供手动拖入“应用程序”。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("系统入口") {
                 LabeledContent("全局命令面板", value: "⌘⇧Space")
@@ -346,7 +358,7 @@ struct DataIntegrationSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
-        .sheet(isPresented: $isConflictPresented) { if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) } }
+        .appDialog(isPresented: $isConflictPresented) { if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) } }
         .confirmationDialog("用备份替换当前数据？", isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } })) {
             Button("确认恢复", role: .destructive) {
                 guard let snapshot = pendingRestore else { return }

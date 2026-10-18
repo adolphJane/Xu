@@ -24,7 +24,7 @@ private enum TaskBlueprintMode: String, CaseIterable, Identifiable {
 
 /// A blueprint is a presentation of the existing task IDs, not a second task model.
 struct TaskBlueprintView: View {
-    @Environment(\.dismiss) private var dismiss
+    @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     let rootTaskID: UUID
@@ -32,10 +32,14 @@ struct TaskBlueprintView: View {
     @State private var mode: TaskBlueprintMode = .blueprint
     @State private var editingTask: TaskItem?
     @State private var newSubtaskTitle = ""
+    @State private var selectedTaskID: UUID?
 
     private var root: TaskItem? { store.tasks.first { $0.id == rootTaskID } }
     private var children: [TaskItem] { TaskTreeProjection.descendants(of: rootTaskID, in: store.tasks) }
     private var allTasks: [TaskItem] { root.map { [$0] + children } ?? [] }
+    private var selectedTask: TaskItem? {
+        store.tasks.first { $0.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) }
+    }
     private var progress: Double {
         guard !children.isEmpty else { return 0 }
         return Double(children.filter(\.isCompleted).count) / Double(children.count)
@@ -79,13 +83,24 @@ struct TaskBlueprintView: View {
                 }
                 .padding(.horizontal, AppSpacing.x6)
                 .padding(.bottom, AppSpacing.x4)
-                HStack(spacing: AppSpacing.x2) {
-                    TextField("添加子任务，按回车保存", text: $newSubtaskTitle)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(addSubtask)
-                        .accessibilityLabel("新子任务名称")
-                    Button("添加子任务", systemImage: "plus", action: addSubtask)
-                        .disabled(newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                    HStack {
+                        Text("添加到：\(selectedTask.map { TaskTreeProjection.path(to: $0.id, in: store.tasks).map(\.title).joined(separator: " › ") } ?? "主任务")")
+                            .font(AppTypography.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button("编辑所选任务", systemImage: "pencil") { editingTask = selectedTask }
+                            .disabled(selectedTask == nil)
+                    }
+                    HStack(spacing: AppSpacing.x2) {
+                        TextField("添加子任务，按回车保存", text: $newSubtaskTitle)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit(addSubtask)
+                            .accessibilityLabel("新子任务名称")
+                        Button("添加子任务", systemImage: "plus", action: addSubtask)
+                            .disabled(newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
                 .padding(.horizontal, AppSpacing.x6)
                 .padding(.bottom, AppSpacing.x4)
@@ -103,7 +118,9 @@ struct TaskBlueprintView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .background(preferences.pageBackground)
-        .sheet(item: $editingTask) { task in TaskEditor(task: task) }
+        .appDialog(item: $editingTask) { task in TaskEditor(task: task) }
+        .onAppear { selectedTaskID = focusTaskID ?? rootTaskID }
+        .onChange(of: focusTaskID) { _, newValue in selectedTaskID = newValue ?? rootTaskID }
     }
 
     private var graph: some View {
@@ -131,7 +148,7 @@ struct TaskBlueprintView: View {
                 .frame(width: width, height: height)
                 ForEach(nodes) { task in
                     if let position = layout[task.id] {
-                        Button { editingTask = store.tasks.first { $0.id == task.id } } label: {
+                        Button { selectedTaskID = task.id } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 7) {
                                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
@@ -141,18 +158,22 @@ struct TaskBlueprintView: View {
                                 Text(task.id == rootTaskID ? "主任务" : "子任务")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
-                                Text(task.effectiveStatus.title)
+                                Text(task.displayStatusTitle)
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             .padding(AppSpacing.x3)
                             .frame(width: 246, height: 96, alignment: .topLeading)
                             .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
                             .overlay(RoundedRectangle(cornerRadius: AppRadius.control)
-                                .stroke(task.id == (focusTaskID ?? rootTaskID) ? preferences.accentColor : .primary.opacity(0.1), lineWidth: task.id == (focusTaskID ?? rootTaskID) ? 2 : 1))
+                                .stroke(task.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) ? preferences.accentColor : .primary.opacity(0.1), lineWidth: task.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) ? 2 : 1))
                             .contentShape(RoundedRectangle(cornerRadius: AppRadius.control))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(task.id == rootTaskID ? "主任务" : "子任务")，\(task.title)，\(task.effectiveStatus.title)，打开编辑")
+                        .accessibilityLabel("\(task.id == rootTaskID ? "主任务" : "子任务")，\(task.title)，\(task.displayStatusTitle)，选择作为添加目标")
+                        .contextMenu {
+                            Button("编辑任务") { selectedTaskID = task.id; editingTask = task }
+                            Button("添加子任务") { selectedTaskID = task.id }
+                        }
                         .position(x: position.x + 123, y: position.y + 48)
                     }
                 }
@@ -163,43 +184,32 @@ struct TaskBlueprintView: View {
     }
 
     private func graphPositions(_ tasks: [TaskItem]) -> [UUID: CGPoint] {
-        let ids = Set(tasks.map(\.id))
         var positions: [UUID: CGPoint] = [:]
-        func depth(_ task: TaskItem, visited: Set<UUID> = []) -> Int {
-            guard let parentID = task.parentTaskID,
-                  ids.contains(parentID), !visited.contains(parentID),
-                  let parent = tasks.first(where: { $0.id == parentID }) else { return 0 }
-            return 1 + depth(parent, visited: visited.union([task.id]))
+        var seen = Set<UUID>()
+        var row = 0
+        func place(_ task: TaskItem, depth: Int) {
+            guard seen.insert(task.id).inserted else { return }
+            positions[task.id] = CGPoint(x: 54 + CGFloat(depth) * 330,
+                                         y: 46 + CGFloat(row) * 132)
+            row += 1
+            for child in TaskTreeProjection.directChildren(of: task.id, in: tasks) {
+                place(child, depth: depth + 1)
+            }
         }
-        for (index, task) in tasks.enumerated() {
-            positions[task.id] = CGPoint(x: 54 + CGFloat(depth(task)) * 330,
-                                         y: 46 + CGFloat(index) * 132)
-        }
+        if let root = tasks.first(where: { $0.id == rootTaskID }) { place(root, depth: 0) }
+        for task in tasks where !seen.contains(task.id) { place(task, depth: 0) }
         return positions
     }
 
     private func addSubtask() {
         let title = newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty, let parent = store.tasks.first(where: { $0.id == (focusTaskID ?? rootTaskID) }) else { return }
-        store.add(TaskItem(
-            title: title,
-            project: parent.project,
-            category: parent.category,
-            reportCategory: parent.reportCategory,
-            quadrant: parent.quadrant,
-            scheduledFor: parent.scheduledFor,
-            status: parent.isUnscheduled ? .unscheduled : .pending,
-            blueprintID: parent.blueprintID,
-            stageID: parent.stageID,
-            milestoneID: parent.milestoneID,
-            parentTaskID: parent.id
-        ))
-        newSubtaskTitle = ""
+        guard !title.isEmpty, let parent = selectedTask else { return }
+        if store.addChild(title: title, to: parent.id) { newSubtaskTitle = "" }
     }
 
     private var taskList: some View {
         ScrollView {
-            TaskList(tasks: allTasks, onSelect: { editingTask = $0 })
+            TaskList(tasks: allTasks, onSelect: { selectedTaskID = $0.id; editingTask = $0 })
             .padding(AppSpacing.x6)
         }
     }
@@ -211,7 +221,7 @@ struct TaskBlueprintView: View {
                     VStack(alignment: .leading, spacing: AppSpacing.x2) {
                         Text(quadrant.title).font(.headline)
                         ForEach(allTasks.filter { $0.quadrant == quadrant }) { task in
-                            TaskCard(task: task, compact: true, onSelect: { editingTask = $0 })
+                            TaskCard(task: task, compact: true, onSelect: { selectedTaskID = $0.id; editingTask = $0 })
                         }
                     }
                     .padding(AppSpacing.x4)

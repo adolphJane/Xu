@@ -23,14 +23,13 @@ extension View {
 struct WorkbenchTopBar: View {
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @Environment(\.openSettings) private var openSettings
     let section: AppSection
     @Binding var isCommandPalettePresented: Bool
     let performCommand: (CommandPaletteAction) -> Void
 
     var body: some View {
         HStack(spacing: 13) {
-            Text("工作区")
+            Text(breadcrumbRoot)
                 .foregroundStyle(.tertiary)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -44,7 +43,7 @@ struct WorkbenchTopBar: View {
             }
             .help("搜索与快速操作")
             .accessibilityLabel("搜索与快速操作")
-            .popover(isPresented: $isCommandPalettePresented, arrowEdge: .bottom) {
+            .appDialog(isPresented: $isCommandPalettePresented) {
                 CommandPaletteView(perform: performCommand)
                     .background(preferences.pageBackground)
             }
@@ -52,20 +51,10 @@ struct WorkbenchTopBar: View {
                 Button("石墨", systemImage: "circle.lefthalf.filled") { setTheme(.stone) }
                 Button("纸张", systemImage: "sun.max") { setTheme(.paper) }
                 Button("墨色", systemImage: "moon.stars") { setTheme(.ink) }
-                Divider()
-                Button("更多皮肤设置", systemImage: "slider.horizontal.3") {
-                    openSettings()
-                }
             } label: {
                 Label(preferences.resolvedPreset.rawValue, systemImage: "paintpalette")
             }
             .help("切换皮肤")
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .comfortableIconTarget()
-            }
-            .help("应用设置")
-            .accessibilityLabel("应用设置")
         }
         .font(.system(size: 13))
         .buttonStyle(WorkbenchPressStyle(reduceMotion: preferences.reduceMotion || systemReduceMotion))
@@ -73,6 +62,15 @@ struct WorkbenchTopBar: View {
         .frame(height: 64)
         .background(preferences.cardBackground.opacity(0.82))
         .overlay(alignment: .bottom) { Rectangle().fill(.primary.opacity(0.07)).frame(height: 1) }
+    }
+
+    private var breadcrumbRoot: String {
+        switch section {
+        case .inbox, .anniversaries, .completed, .report:
+            "记录"
+        case .today, .tasks, .blueprints, .quadrants, .categories, .calendar:
+            "工作区"
+        }
     }
 
     private func setTheme(_ preset: ThemePreset) {

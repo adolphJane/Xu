@@ -2,6 +2,12 @@
 
 本文件适用于整个仓库。项目包含 macOS 14+ SwiftUI 应用（Swift Package Manager 构建）和 iOS/iPadOS 17+ 应用目标（`iOS/SequenceIOS.xcodeproj`）；任务数据由 SwiftData 持久化。
 
+## 当前迭代优先级
+
+- 当前阶段优先处理 macOS 应用；除非用户明确提出 iOS/iPadOS 需求，暂不主动开展 iOS/iPadOS 的界面迁移、功能迭代或专门验收。
+- macOS 单平台改动只需按 macOS 流程构建并打开开发版 `.app`，不因通用迁移规范而额外要求 iOS 构建。修改共用模型、服务或持久化代码时，仍须保持 iOS/iPadOS 源码兼容；当改动可能影响 iOS/iPadOS 编译或行为时，再执行对应验证。
+- 用户明确要求跨平台或 iOS/iPadOS 工作时，再按本文件的双平台要求处理，并在 `docs/design-system/rollout.md` 记录相关范围与验证结果。
+
 ## 开发与数据
 
 - 修改任务模型或持久化结构时，兼顾已有用户数据、旧版 JSON 备份和文件夹同步格式。
@@ -24,6 +30,7 @@
 - 优先复用平台原生控件和现有组件。页面操作、卡片、分区标题、状态标签及页面状态按 `components.md` 选用；表单、搜索、导航、列表和系统提示保持原生行为，不为统一外观而重复封装。
 - 新增或迁移 UI 使用 `Sources/Quadrant/DesignSystem/` 的语义 Design Tokens：颜色按用途选 `AppColors`，系统字体选 `AppTypography`，间距遵循 4pt 阶梯及 `AppSpacing` 的页面/卡片/分区/列表角色，形状和动效分别选 `AppRadius`、`AppShadows`、`AppTheme`。不要在业务页面新增任意 HEX、固定字号、圆角或阴影。
 - 页面按钮遵循 `docs/design-system/components.md` 的 `compact` / `regular` / `prominent` 尺寸与主要/次要层级；不要在 `AppButton` 内叠加系统按钮样式、重复设置高度或在业务页面另写按钮边距。工具栏、表单和菜单的系统按钮保持平台默认交互。
+- **macOS 业务弹窗统一使用添加事项的弹窗方式**：详情、编辑、创建、选择、预览等入口使用统一的 `appDialog` / `AppDialogPanel`，复用透明 `NSPanel`、居中遮罩、圆角表面、淡入放大与缩小淡出、Reduce Motion 和焦点恢复；添加事项的预加载面板也必须使用相同底层实现。业务页不得直接新增 `.sheet`、`.popover`、旧 `clickAwaySheet` / `clickAwayPopover` 或独立窗口动画实现。关闭通过 `@AppDismiss` 或呈现绑定处理，外侧点击与 Escape 通过 `onAppDialogCancel` 复用表单的未保存确认；嵌套弹窗只关闭最上层，退场结束后再执行 `onDismiss` / 后续导航。系统错误提示、危险操作确认、文件选择及系统授权继续使用原生 alert、confirmationDialog 和系统面板；iOS/iPadOS 保留原生 sheet，不套用 macOS 面板。
 - 同时支持浅色与深色、Dynamic Type/文字放大、VoiceOver、合理点击区域、长中文和 Reduce Motion；状态不能只靠颜色表达。迁移页面至少检查空态、有数据状态和主要操作。
 - macOS 保留 `AppPreferences` 的主题、密度和字号偏好，以及现有侧边栏和窗口交互；iOS/iPadOS 17+ 使用 Asset Catalog 的浅/深色资源、系统 `NavigationStack`、`Form`、sheet 和 Safe Area。两个目标的 UI 要分别编译验证，不假定一端通过即代表另一端通过。
 - 逐页迁移，不一次性重写应用；只替换呈现层，不改任务模型、SwiftData、API、备份格式和既有操作语义。每迁移一页，在 `docs/design-system/rollout.md` 记录范围、组件映射和验证结果。
