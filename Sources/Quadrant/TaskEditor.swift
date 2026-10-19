@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct TaskEditor: View {
+    private enum ExitDestination { case close, blueprint }
     @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
@@ -17,11 +18,14 @@ struct TaskEditor: View {
     @State private var reportCategory: ReportCategory = .projectProgress
     @State private var quadrant: Quadrant = .schedule
     @State private var scheduledFor = Date.now
+    private let initialScheduledFor: Date
     @State private var isScheduled = true
     @State private var hasDeadline = false
     @State private var dueDate = Date.now
+    private let initialDueDate: Date
     @State private var estimatedMinutes = 30
     @State private var blueprintID: UUID?
+    private let initialBlueprintID: UUID?
     @State private var stageID: UUID?
     @State private var milestoneID: UUID?
     @State private var dependencyIDs: Set<UUID>
@@ -29,25 +33,33 @@ struct TaskEditor: View {
     @State private var parentTaskID: UUID?
     @State private var newChildTitle = ""
     @State private var editingChild: TaskItem?
+    @State private var childWantsBlueprint = false
     @State private var formError: String?
-    @State private var showDiscardConfirmation = false
+    @State private var showExitConfirmation = false
+    @State private var exitDestination: ExitDestination = .close
     @State private var appliedDefaults = false
-    @State private var openBlueprintOnDismiss = false
+    var onRequestBlueprint: ((TaskItem) -> Void)? = nil
 
-    init(task: TaskItem? = nil, blueprintID: UUID? = nil) {
+    init(task: TaskItem? = nil, blueprintID: UUID? = nil,
+         onRequestBlueprint: ((TaskItem) -> Void)? = nil) {
         original = task
+        self.onRequestBlueprint = onRequestBlueprint
+        let startingDate = Date.now
+        initialScheduledFor = task?.scheduledFor ?? startingDate
+        initialDueDate = task?.dueDate ?? startingDate
+        initialBlueprintID = task?.blueprintID ?? blueprintID
         _title = State(initialValue: task?.title ?? "")
         _notes = State(initialValue: task?.notes ?? "")
         _project = State(initialValue: task?.project ?? "")
         _category = State(initialValue: task?.category ?? "")
         _reportCategory = State(initialValue: task?.effectiveReportCategory ?? .projectProgress)
         _quadrant = State(initialValue: task?.quadrant ?? .schedule)
-        _scheduledFor = State(initialValue: task?.scheduledFor ?? .now)
+        _scheduledFor = State(initialValue: initialScheduledFor)
         _isScheduled = State(initialValue: task?.effectiveStatus != .unscheduled)
         _hasDeadline = State(initialValue: task?.dueDate != nil)
-        _dueDate = State(initialValue: task?.dueDate ?? .now)
+        _dueDate = State(initialValue: initialDueDate)
         _estimatedMinutes = State(initialValue: task?.estimatedMinutes ?? 30)
-        _blueprintID = State(initialValue: task?.blueprintID ?? blueprintID)
+        _blueprintID = State(initialValue: initialBlueprintID)
         _stageID = State(initialValue: task?.stageID)
         _milestoneID = State(initialValue: task?.milestoneID)
         _dependencyIDs = State(initialValue: Set(task?.effectiveDependencyIDs ?? []))
@@ -88,6 +100,12 @@ struct TaskEditor: View {
                     if isScheduled {
                         DatePicker("安排日期", selection: $scheduledFor, displayedComponents: .date)
                             .transition(.opacity.combined(with: .move(edge: .top)))
+                        if let block = original?.timeBlock {
+                            Label("已预留 \(block.start.formatted(.dateTime.month().day().hour().minute()))–\(block.end.formatted(.dateTime.hour().minute()))", systemImage: "clock")
+                                .font(AppTypography.callout)
+                            Text("更改安排日期会清除原执行时间；具体时段可在日历计划调整。")
+                                .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
+                        }
                     }
                     Toggle("设置截止日期", isOn: $hasDeadline)
                     if hasDeadline {
@@ -119,7 +137,7 @@ struct TaskEditor: View {
                     sectionTitle("备注", symbol: "text.alignleft")
                 }
 
-                if let original {
+                if original != nil {
                     Section {
                         if children.isEmpty {
                             Label("还没有子任务，从下一步开始拆解", systemImage: "list.bullet.indent")
@@ -155,7 +173,7 @@ struct TaskEditor: View {
                             Button("添加", systemImage: "plus", action: addChild)
                                 .disabled(newChildTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        Text("子任务会立即保存到“\(original.title)”下。")
+                        Text("已添加的子任务会立即保存；取消只放弃尚未保存的字段。")
                             .font(AppTypography.caption)
                             .foregroundStyle(AppColors.textSecondary)
                     } header: {
@@ -213,17 +231,24 @@ struct TaskEditor: View {
             }
         }
         .onChange(of: stageID) { _, _ in milestoneID = nil }
-        .onDisappear {
-            if openBlueprintOnDismiss, let original { TaskBlueprintNavigation.open(original) }
+        .appDialog(item: $editingChild, onDismiss: {
+            if childWantsBlueprint {
+                childWantsBlueprint = false
+                requestExit(.blueprint)
+            }
+        }) { child in
+            TaskEditor(task: child, onRequestBlueprint: { _ in childWantsBlueprint = true })
         }
-        .appDialog(item: $editingChild) { child in TaskEditor(task: child) }
         .interactiveDismissDisabled(true)
         .onAppDialogCancel {
-            if !showDiscardConfirmation { cancel() }
+            if !showExitConfirmation { requestExit(.close) }
         }
-        .confirmationDialog("放弃未保存的修改？", isPresented: $showDiscardConfirmation) {
-            Button("放弃修改", role: .destructive) { closeEditor() }
-            Button("继续编辑", role: .cancel) { }
+        .confirmationDialog("有尚未保存的修改", isPresented: $showExitConfirmation) {
+            Button("保存并继续") { if saveChanges() { finishExit() } }
+            Button("放弃修改并继续", role: .destructive) { finishExit() }
+            Button("继续编辑", role: .cancel) { exitDestination = .close }
+        } message: {
+            Text("已添加的子任务已经保存；未提交的表单内容将按所选操作处理。")
         }
     }
 
@@ -238,8 +263,7 @@ struct TaskEditor: View {
                 Spacer()
                 if original != nil {
                     Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
-                        openBlueprintOnDismiss = true
-                        closeEditor()
+                        requestExit(.blueprint)
                     }
                     .controlSize(.small)
                 }
@@ -284,7 +308,10 @@ struct TaskEditor: View {
                 Spacer()
                 Button("取消", role: .cancel, action: cancel)
                     .keyboardShortcut(.cancelAction)
-                Button(original == nil ? "创建事项" : "保存修改", action: save)
+                Button(original == nil ? "创建事项" : "保存修改") {
+                    exitDestination = .close
+                    if saveChanges() { finishExit() }
+                }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -361,7 +388,13 @@ struct TaskEditor: View {
 
     private var hasUnsavedChanges: Bool {
         guard let original else {
-            return !title.isEmpty || !notes.isEmpty || !project.isEmpty || !category.isEmpty
+            return !title.isEmpty || !notes.isEmpty || !project.isEmpty || !category.isEmpty ||
+                !newChildTitle.isEmpty || hasDeadline || !isScheduled ||
+                scheduledFor != initialScheduledFor || dueDate != initialDueDate ||
+                blueprintID != initialBlueprintID || stageID != nil ||
+                milestoneID != nil || !dependencyIDs.isEmpty || isPlanLocked ||
+                quadrant != preferences.defaultQuadrant || estimatedMinutes != preferences.defaultDuration ||
+                reportCategory != .projectProgress
         }
         return title != original.title || notes != original.notes || project != (original.project ?? "") ||
             category != (original.category ?? "") || reportCategory != original.effectiveReportCategory ||
@@ -371,44 +404,74 @@ struct TaskEditor: View {
             blueprintID != original.blueprintID || stageID != original.stageID ||
             milestoneID != original.milestoneID || dependencyIDs != Set(original.effectiveDependencyIDs) ||
             parentTaskID != original.parentTaskID || isPlanLocked != original.planLocked ||
-            isScheduled != !original.isUnscheduled
+            isScheduled != !original.isUnscheduled || !newChildTitle.isEmpty
     }
 
     private func cancel() {
-        guard presentation?.isClosing != true else { return }
-        if hasUnsavedChanges { showDiscardConfirmation = true }
-        else { closeEditor() }
+        requestExit(.close)
     }
 
-    private func save() {
+    private func requestExit(_ destination: ExitDestination) {
         guard presentation?.isClosing != true else { return }
+        exitDestination = destination
+        if hasUnsavedChanges { showExitConfirmation = true }
+        else { finishExit() }
+    }
+
+    private func finishExit() {
+        if case .blueprint = exitDestination, let original {
+            onRequestBlueprint?(store.tasks.first { $0.id == original.id } ?? original)
+        }
+        closeEditor()
+    }
+
+    @discardableResult
+    private func saveChanges() -> Bool {
+        guard presentation?.isClosing != true else { return false }
+        if !newChildTitle.isEmpty {
+            formError = "请先按回车添加子任务，或清空这行文字。"
+            return false
+        }
+        let latest = original.flatMap { item in store.tasks.first { $0.id == item.id } }
+        if original != nil && latest == nil {
+            formError = "任务已不存在，无法保存。"
+            return false
+        }
+        let current = latest ?? original
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty else {
+            formError = "请输入事项名称。"
+            return false
+        }
         let task = TaskItem(
-            id: original?.id ?? UUID(), title: title.trimmingCharacters(in: .whitespacesAndNewlines), notes: notes,
+            id: original?.id ?? UUID(), title: cleanTitle, notes: notes,
             project: project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : project.trimmingCharacters(in: .whitespacesAndNewlines),
             category: category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : category.trimmingCharacters(in: .whitespacesAndNewlines),
             reportCategory: reportCategory,
             quadrant: quadrant, scheduledFor: scheduledFor, dueDate: hasDeadline ? dueDate : nil,
-            estimatedMinutes: estimatedMinutes, isComplete: original?.isComplete ?? false,
-            status: isScheduled ? (original?.isUnscheduled == true ? .pending : original?.status) : .unscheduled,
-            completedAt: original?.completedAt, autoCompletedAt: original?.autoCompletedAt,
-            createdAt: original?.createdAt ?? .now,
+            estimatedMinutes: estimatedMinutes, isComplete: current?.isComplete ?? false,
+            status: isScheduled ? (current?.isUnscheduled == true ? .pending : current?.status) : .unscheduled,
+            completedAt: current?.completedAt, autoCompletedAt: current?.autoCompletedAt,
+            createdAt: current?.createdAt ?? .now,
             blueprintID: blueprintID, stageID: stageID, milestoneID: milestoneID,
-            startedAt: original?.startedAt, originalScheduledFor: original?.originalScheduledFor,
-            blockReason: original?.blockReason, statusChangedAt: original?.statusChangedAt,
+            startedAt: current?.startedAt, originalScheduledFor: current?.originalScheduledFor,
+            blockReason: current?.blockReason, statusChangedAt: current?.statusChangedAt,
             parentTaskID: parentTaskID,
             dependencyIDs: dependencyIDs.isEmpty ? nil : Array(dependencyIDs),
-            originalDueDate: original?.originalDueDate,
-            isPlanLocked: isScheduled && isPlanLocked
+            originalDueDate: current?.originalDueDate,
+            isPlanLocked: isScheduled && isPlanLocked,
+            timeBlock: current?.timeBlock
         )
         if original == nil { store.add(task) }
         else {
             guard store.update(task) else {
                 formError = store.actionMessage ?? "保存失败，请重试。"
                 store.actionMessage = nil
-                return
+                return false
             }
         }
-        closeEditor()
+        formError = nil
+        return true
     }
 
     private func addChild() {

@@ -93,6 +93,7 @@ final class StoredTask {
     var workflowX: Double?
     var workflowY: Double?
     var workflowImagesData: Data?
+    var timeBlockData: Data?
 
     init(_ item: TaskItem) {
         id = item.id
@@ -123,6 +124,7 @@ final class StoredTask {
         workflowX = item.workflowX
         workflowY = item.workflowY
         workflowImagesData = try? JSONEncoder().encode(item.images)
+        timeBlockData = try? JSONEncoder().encode(item.timeBlock)
     }
 
     func update(from item: TaskItem, preserveWorkflowImages: Bool = false) {
@@ -155,6 +157,7 @@ final class StoredTask {
         if !preserveWorkflowImages {
             workflowImagesData = try? JSONEncoder().encode(item.images)
         }
+        timeBlockData = try? JSONEncoder().encode(item.timeBlock)
     }
 
     var item: TaskItem {
@@ -187,7 +190,8 @@ final class StoredTask {
             isPlanLocked: isPlanLocked,
             workflowX: workflowX,
             workflowY: workflowY,
-            workflowImages: workflowImagesData.flatMap { try? JSONDecoder().decode([WorkflowImage].self, from: $0) }
+            workflowImages: workflowImagesData.flatMap { try? JSONDecoder().decode([WorkflowImage].self, from: $0) },
+            timeBlock: timeBlockData.flatMap { try? JSONDecoder().decode(TaskTimeBlock.self, from: $0) }
         )
     }
 
@@ -502,6 +506,7 @@ final class PersistenceController {
     }
 
     func saveTasks(_ items: [TaskItem]) throws { try sync(items, records: context.fetch(FetchDescriptor<StoredTask>()), id: \.id, make: StoredTask.init, update: { $0.update(from: $1) }) }
+    func rollbackChanges() { context.rollback() }
     func saveTask(_ item: TaskItem) throws {
         let taskID = item.id
         let descriptor = FetchDescriptor<StoredTask>(predicate: #Predicate { $0.id == taskID })

@@ -44,6 +44,7 @@ struct ContentView: View {
     // The reference stays stable while only the overlay observes mode changes.
     @State private var composerPresentation = TaskComposerPresentation()
     @State private var selectedTask: TaskItem?
+    @State private var editorBlueprintDestination: TaskItem?
     @State private var taskBlueprintRoute: TaskBlueprintRoute?
     @State private var showsBlueprintLibrary = false
     @State private var isReportPresented = false
@@ -81,7 +82,7 @@ struct ContentView: View {
                     case .blueprints: BlueprintsView()
                     case .quadrants: QuadrantBoard(onSelect: { selectedTask = $0 })
                     case .categories: TaskCategoriesView(onSelect: { selectedTask = $0 })
-                    case .calendar: PlanView(onSelect: { selectedTask = $0 })
+                    case .calendar: PlanView(onSelect: { selectedTask = $0 }, onAddTask: { composerPresentation.show(.task) })
                     case .anniversaries: AnniversariesView()
                     case .completed: CompletedView(onSelect: { selectedTask = $0 })
                     case .report: ReportLanding(onGenerate: { isReportPresented = true })
@@ -97,7 +98,14 @@ struct ContentView: View {
         .overlay {
             TaskComposerPanelHost(presentation: composerPresentation)
         }
-        .appDialog(item: $selectedTask) { task in TaskEditor(task: task) }
+        .appDialog(item: $selectedTask, onDismiss: {
+            if let task = editorBlueprintDestination {
+                editorBlueprintDestination = nil
+                TaskBlueprintNavigation.open(task)
+            }
+        }) { task in
+            TaskEditor(task: task, onRequestBlueprint: { editorBlueprintDestination = $0 })
+        }
         .appDialog(item: $taskBlueprintRoute) { route in
             if let blueprintID = route.blueprintID,
                store.blueprints.contains(where: { $0.id == blueprintID }) {
@@ -690,10 +698,22 @@ struct TaskList: View {
     @State private var collapsedRootIDs: Set<UUID> = []
     let tasks: [TaskItem]
     let onSelect: (TaskItem) -> Void
+    var onEditTask: ((TaskItem) -> Void)? = nil
+    var onAddChildTask: ((TaskItem) -> Void)? = nil
+    var onShowBlueprint: ((TaskItem) -> Void)? = nil
+    var selectedTaskID: UUID? = nil
+    var revealRequest = false
+    var hidesDefaultMetadata = false
+    var clarifiesChildScope = false
 
     private var visibleRoots: [TaskItem] {
         let ids = Set(tasks.map(\.id))
         return tasks.filter { $0.parentTaskID.map { !ids.contains($0) } ?? true }
+    }
+
+    private func revealSelected() {
+        guard let selectedTaskID else { return }
+        collapsedRootIDs.subtract(TaskTreeProjection.path(to: selectedTaskID, in: tasks).map(\.id))
     }
 
     var body: some View {
@@ -704,9 +724,14 @@ struct TaskList: View {
             }
             ForEach(visibleRoots) { task in
                 TaskListTreeRow(task: task, tasks: tasks, depth: 0,
-                                visited: [], collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
+                                visited: [], collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect,
+                                onEditTask: onEditTask, onAddChildTask: onAddChildTask,
+                                onShowBlueprint: onShowBlueprint,
+                                selectedTaskID: selectedTaskID, hidesDefaultMetadata: hidesDefaultMetadata,
+                                clarifiesChildScope: clarifiesChildScope)
             }
         }
+        .onChange(of: revealRequest) { _, _ in revealSelected() }
     }
 }
 
@@ -717,6 +742,12 @@ private struct TaskListTreeRow: View {
     let visited: Set<UUID>
     @Binding var collapsedRootIDs: Set<UUID>
     let onSelect: (TaskItem) -> Void
+    let onEditTask: ((TaskItem) -> Void)?
+    let onAddChildTask: ((TaskItem) -> Void)?
+    let onShowBlueprint: ((TaskItem) -> Void)?
+    let selectedTaskID: UUID?
+    let hidesDefaultMetadata: Bool
+    let clarifiesChildScope: Bool
 
     private var children: [TaskItem] {
         TaskTreeProjection.directChildren(of: task.id, in: tasks).filter { !visited.contains($0.id) }
@@ -737,14 +768,23 @@ private struct TaskListTreeRow: View {
             } else if depth > 0 {
                 Color.clear.frame(width: 26, height: 1)
             }
-            TaskCard(task: task, onSelect: onSelect)
+            TaskCard(task: task, onSelect: onSelect, onEditTask: onEditTask,
+                     onAddChildTask: onAddChildTask, onShowBlueprint: onShowBlueprint,
+                     isSelected: selectedTaskID == task.id,
+                     hidesDefaultMetadata: hidesDefaultMetadata,
+                     clarifiesChildScope: clarifiesChildScope)
         }
+        .id(task.id)
         .padding(.leading, CGFloat(min(depth, 6)) * AppSpacing.x6)
         if !collapsedRootIDs.contains(task.id) {
             ForEach(children) { child in
                 TaskListTreeRow(task: child, tasks: tasks, depth: depth + 1,
                                 visited: visited.union([task.id]),
-                                collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect)
+                                collapsedRootIDs: $collapsedRootIDs, onSelect: onSelect,
+                                onEditTask: onEditTask, onAddChildTask: onAddChildTask,
+                                onShowBlueprint: onShowBlueprint,
+                                selectedTaskID: selectedTaskID, hidesDefaultMetadata: hidesDefaultMetadata,
+                                clarifiesChildScope: clarifiesChildScope)
             }
         }
     }
@@ -763,9 +803,14 @@ struct TaskCard: View {
     var embedded = false
     let onSelect: (TaskItem) -> Void
     var onEditTask: ((TaskItem) -> Void)? = nil
+    var onAddChildTask: ((TaskItem) -> Void)? = nil
+    var onShowBlueprint: ((TaskItem) -> Void)? = nil
     var onCompleteTask: ((TaskItem) -> Void)? = nil
     var completionInProgress = false
     var onShowDetails: ((TaskItem) -> Void)? = nil
+    var isSelected = false
+    var hidesDefaultMetadata = false
+    var clarifiesChildScope = false
 
     private var childTasks: [TaskItem] { store.tasks.filter { $0.parentTaskID == task.id } }
 
@@ -794,7 +839,9 @@ struct TaskCard: View {
                                                               weight: .semibold, design: preferences.fontStyle.design) : nil)
                 }
                 if !childTasks.isEmpty && !embedded {
-                    Text("\(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 项子任务已完成")
+                    Text(clarifiesChildScope
+                         ? "直接子任务 \(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 已完成"
+                         : "\(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 项子任务已完成")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -818,8 +865,12 @@ struct TaskCard: View {
                 } else if !compact {
                     HStack(spacing: 7) {
                         if !task.isPending { Text(task.displayStatusTitle).foregroundStyle(statusColor) }
-                        Label(task.projectName, systemImage: "folder").foregroundStyle(.secondary)
-                        Label(task.categoryName, systemImage: "tag").foregroundStyle(.secondary)
+                        if !hidesDefaultMetadata || !(task.project ?? "").isEmpty {
+                            Label(task.projectName, systemImage: "folder").foregroundStyle(.secondary)
+                        }
+                        if !hidesDefaultMetadata || !(task.category ?? "").isEmpty {
+                            Label(task.categoryName, systemImage: "tag").foregroundStyle(.secondary)
+                        }
                         Label(task.quadrant.title, systemImage: "square.grid.2x2").foregroundStyle(preferences.color(for: task.quadrant))
                         Text("· \(task.estimatedMinutes) 分钟")
                         if let dueDate = task.dueDate { Text("· 截止 \(dueDate, format: .dateTime.month().day())") }
@@ -871,9 +922,13 @@ struct TaskCard: View {
                     Button("查看详情", systemImage: "info.circle") { onShowDetails(task) }
                 }
                 Button("编辑任务", systemImage: "pencil") { (onEditTask ?? onSelect)(task) }
-                Button("添加子任务", systemImage: "plus") { isAddingChild = true }
+                Button("添加子任务", systemImage: "plus") {
+                    if let onAddChildTask { onAddChildTask(task) }
+                    else { isAddingChild = true }
+                }
                 Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
-                    TaskBlueprintNavigation.open(task)
+                    if let onShowBlueprint { onShowBlueprint(task) }
+                    else { TaskBlueprintNavigation.open(task) }
                 }
                 Divider()
                 if task.isUnscheduled {
@@ -941,7 +996,9 @@ struct TaskCard: View {
         .overlay {
             if !embedded {
                 RoundedRectangle(cornerRadius: compact ? max(6, preferences.cornerRadius - 3) : preferences.cornerRadius)
-                    .stroke(isHovered ? preferences.accentColor.opacity(0.28) : .primary.opacity(0.07))
+                    .stroke(isSelected ? preferences.accentColor :
+                            (isHovered ? preferences.accentColor.opacity(0.28) : .primary.opacity(0.07)),
+                            lineWidth: isSelected ? 2 : 1)
             }
         }
         .shadow(color: embedded ? .clear : .black.opacity(isHovered ? max(0.1, preferences.shadowStrength) : preferences.shadowStrength), radius: isHovered ? 12 : 7, y: isHovered ? 4 : 2)
@@ -951,6 +1008,7 @@ struct TaskCard: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { onSelect(task) }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .appDialog(isPresented: $isBlocking) { BlockTaskEditor(task: task) }
         .appDialog(isPresented: $isAddingChild) { TaskChildQuickAddView(parentTaskID: task.id) }
         .confirmationDialog("删除“\(task.title)”及其后代？", isPresented: $isConfirmingDelete) {
@@ -1099,119 +1157,6 @@ struct InboxView: View {
                         .frame(maxWidth: .infinity, minHeight: 240)
                 } else {
                     TaskList(tasks: tasks, onSelect: onSelect)
-                }
-            }.padding(AppSpacing.x8)
-        }
-    }
-}
-
-struct PlanView: View {
-    @EnvironmentObject private var store: TaskStore
-    @EnvironmentObject private var preferences: AppPreferences
-    let onSelect: (TaskItem) -> Void
-    @State private var days = 7
-
-    private var scopedTasks: [TaskItem] {
-        let start = Calendar.current.startOfDay(for: .now)
-        let end = Calendar.current.date(byAdding: .day, value: days, to: start) ?? start
-        return store.tasks.filter { !$0.isUnscheduled && $0.scheduledFor >= start && $0.scheduledFor < end && !$0.isCancelled }
-            .sorted { $0.scheduledFor < $1.scheduledFor }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppSpacing.section) {
-                HStack(alignment: .bottom) {
-                    PageHeader(eyebrow: "PLAN", title: "日历计划", description: "按周或月查看计划容量，给重要事项预留时间。")
-                    Spacer()
-                    Picker("周期", selection: $days) {
-                        Text("未来 7 天").tag(7)
-                        Text("未来 30 天").tag(30)
-                    }.pickerStyle(.segmented).frame(width: 210)
-                }
-                HStack(spacing: AppSpacing.x3) {
-                    StatCard(title: "计划事项", value: "\(scopedTasks.count)", icon: "calendar", color: preferences.accentColor)
-                    StatCard(title: "预计投入", value: "\(scopedTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟", icon: "clock", color: AppColors.textSecondary)
-                    StatCard(title: "已阻塞", value: "\(scopedTasks.filter { $0.effectiveStatus == .blocked }.count)", icon: "exclamationmark.octagon", color: AppColors.warning)
-                }
-                if preferences.calendarIntegrationEnabled {
-                    VStack(alignment: .leading, spacing: AppSpacing.x3) {
-                        HStack {
-                            Text("系统日历").font(AppTypography.title)
-                            Spacer()
-                            Button("刷新", systemImage: "arrow.clockwise") {
-                                Task {
-                                    do {
-                                        guard try await CalendarIntegration.shared.requestAccess() else { return }
-                                        store.calendarEvents = CalendarIntegration.shared.events(days: days)
-                                    } catch { store.actionMessage = "读取日历失败：\(error.localizedDescription)" }
-                                }
-                            }
-                        }
-                        if store.calendarEvents.isEmpty {
-                            Text("授权后点击刷新，系统日程会显示在这里。")
-                                .font(AppTypography.callout).foregroundStyle(AppColors.textSecondary)
-                        } else {
-                            ForEach(store.calendarEvents.prefix(8)) { event in
-                                HStack(alignment: .top, spacing: AppSpacing.x3) {
-                                    Image(systemName: "calendar").foregroundStyle(preferences.accentColor)
-                                    VStack(alignment: .leading, spacing: AppSpacing.x1) {
-                                        Text(event.title).font(AppTypography.body)
-                                        Text(event.calendarTitle)
-                                            .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
-                                    }
-                                    Spacer(minLength: AppSpacing.x2)
-                                    Text(event.startDate, format: .dateTime.month().day().hour().minute())
-                                        .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
-                                }
-                                .padding(AppSpacing.x3)
-                                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
-                                .overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
-                            }
-                        }
-                    }
-                }
-                if scopedTasks.isEmpty {
-                    AppEmptyState(title: "这个周期还没有计划", message: "通过添加事项或编辑任务日期安排计划。",
-                                  systemImage: "calendar")
-                        .frame(maxWidth: .infinity, minHeight: 300)
-                } else {
-                    ForEach(Dictionary(grouping: scopedTasks, by: { Calendar.current.startOfDay(for: $0.scheduledFor) }).keys.sorted(), id: \.self) { date in
-                        VStack(alignment: .leading, spacing: AppSpacing.list) {
-                            HStack {
-                                Text(date, format: .dateTime.month().day().weekday(.wide)).font(AppTypography.headline)
-                                Spacer()
-                                let dayTasks = scopedTasks.filter { Calendar.current.isDate($0.scheduledFor, inSameDayAs: date) }
-                                Text("\(dayTasks.count) 项 · \(dayTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟")
-                                    .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
-                            }
-                            ForEach(scopedTasks.filter { Calendar.current.isDate($0.scheduledFor, inSameDayAs: date) }) { task in
-                                TaskCard(task: task, onSelect: onSelect)
-                            }
-                        }
-                    }
-                }
-            }.padding(AppSpacing.x8)
-        }
-    }
-}
-
-struct CompletedView: View {
-    @EnvironmentObject private var store: TaskStore
-    let onSelect: (TaskItem) -> Void
-    private var processedTasks: [TaskItem] {
-        store.processedToday.sorted { ($0.statusChangedAt ?? $0.completedAt ?? .distantPast) > ($1.statusChangedAt ?? $1.completedAt ?? .distantPast) }
-    }
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppSpacing.section) {
-                PageHeader(eyebrow: "HISTORY", title: "今日已处理", description: "完成、取消和延期都有记录，便于复盘计划变化。")
-                if processedTasks.isEmpty {
-                    AppEmptyState(title: "今天还没有已处理事项", message: "完成、取消或延期的事项会显示在这里。",
-                                  systemImage: "checkmark.circle")
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                } else {
-                    TaskList(tasks: processedTasks, onSelect: onSelect)
                 }
             }.padding(AppSpacing.x8)
         }

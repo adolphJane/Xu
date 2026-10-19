@@ -352,7 +352,7 @@ struct BlueprintDetailView: View {
         .appDialog(isPresented: $isAddingTask) {
             TaskComposerView(blueprintID: blueprintID, opensBlueprintOnSave: false)
         }
-        .appDialog(item: $editingTask) { TaskEditor(task: $0) }
+        .appDialog(item: $editingTask) { TaskEditor(task: $0, onRequestBlueprint: { _ in }) }
         .appDialog(isPresented: $isRescheduling) { ReschedulePreviewView(blueprintID: blueprintID) }
         .appDialog(isPresented: $isAIReplanning) { if let blueprint { AIReplanView(blueprint: blueprint) } }
         .appDialog(isPresented: $isEditing) {

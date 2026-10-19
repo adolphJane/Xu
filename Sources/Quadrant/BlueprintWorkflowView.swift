@@ -126,7 +126,7 @@ struct BlueprintWorkflowView: View {
         }
         .appDialog(isPresented: $isAddingStage) { StageEditor(blueprintID: blueprint.id) }
         .appDialog(item: $milestoneStage) { MilestoneEditor(blueprintID: blueprint.id, stage: $0) }
-        .appDialog(item: $editingTask) { TaskEditor(task: $0) }
+        .appDialog(item: $editingTask) { TaskEditor(task: $0, onRequestBlueprint: { _ in }) }
         .onChange(of: isQuickAdding) { _, value in if value { quickFocused = true } }
         .onAppear { if let focusTaskID { selectedID = focusTaskID } }
         .onChange(of: focusTaskID) { _, newValue in if let newValue { selectedID = newValue } }

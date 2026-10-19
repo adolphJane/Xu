@@ -286,6 +286,7 @@ struct CalendarEventItem: Identifiable, Equatable {
     var endDate: Date
     var calendarTitle: String
     var isAllDay: Bool
+    var isBusy: Bool = true
 }
 
 struct UpdateManifest: Codable, Equatable {

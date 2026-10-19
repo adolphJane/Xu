@@ -293,6 +293,8 @@ final class CalendarIntegration: @unchecked Sendable {
     static let shared = CalendarIntegration()
     private let store = EKEventStore()
 
+    var hasReadAccess: Bool { EKEventStore.authorizationStatus(for: .event) == .fullAccess }
+
     func requestAccess() async throws -> Bool {
         try await store.requestFullAccessToEvents()
     }
@@ -300,19 +302,30 @@ final class CalendarIntegration: @unchecked Sendable {
     func events(days: Int = 30) -> [CalendarEventItem] {
         let start = Calendar.current.startOfDay(for: .now)
         let end = Calendar.current.date(byAdding: .day, value: days, to: start) ?? start
+        return events(from: start, to: end)
+    }
+
+    func events(from start: Date, to end: Date) -> [CalendarEventItem] {
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
-        return store.events(matching: predicate).map {
-            CalendarEventItem(id: $0.eventIdentifier ?? UUID().uuidString, title: $0.title ?? "无标题日程", startDate: $0.startDate, endDate: $0.endDate, calendarTitle: $0.calendar.title, isAllDay: $0.isAllDay)
+        return store.events(matching: predicate).filter { $0.url?.scheme != "xu-task" }.map {
+            CalendarEventItem(id: $0.eventIdentifier ?? UUID().uuidString, title: $0.title ?? "无标题日程", startDate: $0.startDate, endDate: $0.endDate, calendarTitle: $0.calendar.title, isAllDay: $0.isAllDay, isBusy: $0.availability == .busy || $0.availability == .tentative || $0.availability == .unavailable)
         }.sorted { $0.startDate < $1.startDate }
     }
 
     func write(task: TaskItem) throws {
-        let event = EKEvent(eventStore: store)
+        guard let block = task.timeBlock, block.end > block.start else {
+            throw NSError(domain: "序日历", code: 1, userInfo: [NSLocalizedDescriptionKey: "请先为事项安排具体执行时间。"])
+        }
+        let mappingKey = "quadrant.calendarEvent.\(task.id.uuidString)"
+        let existingID = UserDefaults.standard.string(forKey: mappingKey)
+        let event = existingID.flatMap(store.event(withIdentifier:)) ?? EKEvent(eventStore: store)
         event.title = task.title
         event.notes = task.notes
-        event.startDate = task.scheduledFor
-        event.endDate = task.dueDate ?? task.scheduledFor.addingTimeInterval(TimeInterval(task.estimatedMinutes * 60))
-        event.calendar = store.defaultCalendarForNewEvents
+        event.startDate = block.start
+        event.endDate = block.end
+        event.url = URL(string: "xu-task://\(task.id.uuidString)")
+        if event.calendar == nil { event.calendar = store.defaultCalendarForNewEvents }
         try store.save(event, span: .thisEvent, commit: true)
+        if let eventID = event.eventIdentifier { UserDefaults.standard.set(eventID, forKey: mappingKey) }
     }
 }

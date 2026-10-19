@@ -379,6 +379,13 @@ enum TaskStatus: String, CaseIterable, Codable {
     }
 }
 
+struct TaskTimeBlock: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var start: Date
+    var end: Date
+    var timeZoneID: String = TimeZone.current.identifier
+}
+
 struct TaskItem: Identifiable, Codable, Equatable {
     var id = UUID()
     var title: String
@@ -409,6 +416,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var workflowX: Double? = nil
     var workflowY: Double? = nil
     var workflowImages: [WorkflowImage]? = nil
+    /// Explicit execution time. Older date-only plans decode with no block.
+    var timeBlock: TaskTimeBlock? = nil
 
     var effectiveReportCategory: ReportCategory { reportCategory ?? .projectProgress }
     var effectiveStatus: TaskStatus { status ?? (isComplete ? .completed : .pending) }
@@ -713,6 +722,13 @@ final class TaskStore: ObservableObject {
         let previousBlueprintID = previous.blueprintID
         var updated = task
         updated.category = resolvedCategory(updated.category)
+        if updated.isUnscheduled || updated.isCancelled {
+            updated.timeBlock = nil
+        } else if updated.timeBlock == previous.timeBlock,
+                  !Calendar.current.isDate(updated.scheduledFor, inSameDayAs: previous.scheduledFor) {
+            // A date edit in the existing task editor makes the precise time unconfirmed.
+            updated.timeBlock = nil
+        }
         if !updated.isCompleted { updated.autoCompletedAt = nil }
         guard !updated.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               TaskTreeProjection.canAssignParent(updated.parentTaskID, to: updated.id, in: tasks) else {
@@ -781,6 +797,45 @@ final class TaskStore: ObservableObject {
         tasks[index] = updated
         if let category = updated.category { addCategory(category) }
         if previousBlueprintID != updated.blueprintID { removeCrossBlueprintDependents(of: updated) }
+        return true
+    }
+
+    /// Commits a calendar series move in one task collection update after checking stale previews.
+    @discardableResult
+    func applyCalendarSeriesMove(_ changes: [(before: TaskItem, after: TaskItem)]) -> Bool {
+        guard !changes.isEmpty, Set(changes.map { $0.before.id }).count == changes.count else { return false }
+        var candidate = tasks
+        for change in changes {
+            guard let index = candidate.firstIndex(where: { $0.id == change.before.id }),
+                  candidate[index] == change.before,
+                  change.after.id == change.before.id,
+                  !change.before.isCompleted, !change.before.isCancelled,
+                  !change.before.planLocked, change.before.startedAt == nil,
+                  change.after.dueDate == change.before.dueDate,
+                  change.after.effectiveStatus == change.before.effectiveStatus else {
+                actionMessage = "系列安排已变化，请重新预览后再保存。"
+                return false
+            }
+            candidate[index] = change.after
+        }
+        do {
+            if let persistence {
+                do { try persistence.saveTasks(candidate) }
+                catch {
+                    persistence.rollbackChanges()
+                    throw error
+                }
+            } else {
+                let data = try JSONEncoder().encode(candidate)
+                UserDefaults.standard.set(data, forKey: storageKey)
+            }
+        } catch {
+            actionMessage = "系列安排保存失败：\(error.localizedDescription)"
+            return false
+        }
+        isApplyingSingleTaskMutation = true
+        tasks = candidate
+        isApplyingSingleTaskMutation = false
         return true
     }
 

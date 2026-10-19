@@ -15,10 +15,16 @@ enum TaskBlueprintNavigation {
     }
 }
 
-private enum TaskBlueprintMode: String, CaseIterable, Identifiable {
+enum TaskBlueprintMode: String, CaseIterable, Identifiable {
     case blueprint = "蓝图"
     case list = "列表"
     case quadrants = "四象限"
+    var id: Self { self }
+}
+
+private enum TaskQuadrantFilter: String, CaseIterable, Identifiable {
+    case actionable = "待处理"
+    case all = "全部"
     var id: Self { self }
 }
 
@@ -33,12 +39,24 @@ struct TaskBlueprintView: View {
     @State private var editingTask: TaskItem?
     @State private var newSubtaskTitle = ""
     @State private var selectedTaskID: UUID?
+    @State private var collapsedTaskIDs: Set<UUID> = []
+    @State private var quadrantFilter: TaskQuadrantFilter = .all
+    @State private var graphFit = true
+    @State private var locateSelected = false
+    @State private var addError: String?
+    @FocusState private var addFieldFocused: Bool
+
+    init(rootTaskID: UUID, focusTaskID: UUID? = nil, initialMode: TaskBlueprintMode = .blueprint) {
+        self.rootTaskID = rootTaskID
+        self.focusTaskID = focusTaskID
+        _mode = State(initialValue: initialMode)
+    }
 
     private var root: TaskItem? { store.tasks.first { $0.id == rootTaskID } }
     private var children: [TaskItem] { TaskTreeProjection.descendants(of: rootTaskID, in: store.tasks) }
     private var allTasks: [TaskItem] { root.map { [$0] + children } ?? [] }
     private var selectedTask: TaskItem? {
-        store.tasks.first { $0.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) }
+        allTasks.first { $0.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) } ?? root
     }
     private var progress: Double {
         guard !children.isEmpty else { return 0 }
@@ -56,7 +74,7 @@ struct TaskBlueprintView: View {
                         .background(preferences.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: AppRadius.control))
                     VStack(alignment: .leading, spacing: 5) {
                         Text(root.title).font(.title2.weight(.semibold))
-                        Text(children.isEmpty ? "任务蓝图 · 从这项任务开始拆解" : "任务蓝图 · \(children.filter(\.isCompleted).count)/\(children.count) 项子任务已完成")
+                        Text(children.isEmpty ? "任务蓝图 · 从这项任务开始拆解" : "全部后代 \(children.filter(\.isCompleted).count)/\(children.count) 已完成")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -76,30 +94,55 @@ struct TaskBlueprintView: View {
                         ForEach(TaskBlueprintMode.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                    .labelsHidden()
                     .frame(width: 330)
-                    Text("所有视图使用同一批任务")
-                        .font(.caption).foregroundStyle(.secondary)
                     Spacer()
+                    if mode == .blueprint {
+                        Button("适应全图", systemImage: "arrow.up.left.and.arrow.down.right") { graphFit = true }
+                    }
+                    Button("定位所选", systemImage: "scope") { locateSelected.toggle() }
+                    if mode == .quadrants {
+                        Picker("显示任务", selection: $quadrantFilter) {
+                            ForEach(TaskQuadrantFilter.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
                 }
                 .padding(.horizontal, AppSpacing.x6)
                 .padding(.bottom, AppSpacing.x4)
                 VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                    Text("当前选中：\(selectedTask?.title ?? "无")")
+                        .font(AppTypography.callout.weight(.semibold))
+                    Text("归属路径：\(selectedTask.map { TaskTreeProjection.path(to: $0.id, in: allTasks).map(\.title).joined(separator: " › ") } ?? "主任务")")
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     HStack {
-                        Text("添加到：\(selectedTask.map { TaskTreeProjection.path(to: $0.id, in: store.tasks).map(\.title).joined(separator: " › ") } ?? "主任务")")
-                            .font(AppTypography.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if let selectedTask {
+                            Text("\(selectedTask.displayStatusTitle) · \(selectedTask.isUnscheduled ? "暂未安排" : "计划 \(selectedTask.scheduledFor.formatted(.dateTime.month().day()))")")
+                                .font(AppTypography.caption).foregroundStyle(.secondary)
+                            if let due = selectedTask.dueDate {
+                                Text("截止 \(due.formatted(.dateTime.month().day()))")
+                                    .font(AppTypography.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         Spacer()
                         Button("编辑所选任务", systemImage: "pencil") { editingTask = selectedTask }
                             .disabled(selectedTask == nil)
                     }
                     HStack(spacing: AppSpacing.x2) {
-                        TextField("添加子任务，按回车保存", text: $newSubtaskTitle)
+                        TextField("给\(selectedTask?.title ?? "所选任务")添加子任务，按回车保存", text: $newSubtaskTitle)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit(addSubtask)
+                            .focused($addFieldFocused)
                             .accessibilityLabel("新子任务名称")
                         Button("添加子任务", systemImage: "plus", action: addSubtask)
                             .disabled(newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let addError {
+                        Label(addError, systemImage: "exclamationmark.triangle")
+                            .font(AppTypography.caption).foregroundStyle(AppColors.danger)
                     }
                 }
                 .padding(.horizontal, AppSpacing.x6)
@@ -116,121 +159,225 @@ struct TaskBlueprintView: View {
                 ContentUnavailableView("任务不存在", systemImage: "exclamationmark.triangle")
             }
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 680, minHeight: 600)
         .background(preferences.pageBackground)
-        .appDialog(item: $editingTask) { task in TaskEditor(task: task) }
+        .appDialog(item: $editingTask) { task in
+            TaskEditor(task: task, onRequestBlueprint: { _ in })
+        }
         .onAppear { selectedTaskID = focusTaskID ?? rootTaskID }
         .onChange(of: focusTaskID) { _, newValue in selectedTaskID = newValue ?? rootTaskID }
+        .onChange(of: allTasks.map(\.id)) { _, ids in
+            if let selectedTaskID, !ids.contains(selectedTaskID) {
+                self.selectedTaskID = ids.contains(rootTaskID) ? rootTaskID : nil
+            }
+        }
+        .onChange(of: selectedTaskID) { _, _ in addError = nil }
     }
 
     private var graph: some View {
         let nodes = allTasks
-        let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let layout = graphPositions(nodes)
-        let width = max(850, (layout.values.map(\.x).max() ?? 0) + 300)
-        let height = max(480, (layout.values.map(\.y).max() ?? 0) + 145)
-        return ScrollView([.horizontal, .vertical]) {
-            ZStack(alignment: .topLeading) {
-                Canvas { context, _ in
-                    for task in nodes {
-                        guard let parentID = task.parentTaskID,
-                              byID[parentID] != nil,
-                              let start = layout[parentID], let end = layout[task.id] else { continue }
-                        var path = Path()
-                        path.move(to: CGPoint(x: start.x + 246, y: start.y + 46))
-                        path.addCurve(to: CGPoint(x: end.x, y: end.y + 46),
-                                      control1: CGPoint(x: start.x + 285, y: start.y + 46),
-                                      control2: CGPoint(x: end.x - 36, y: end.y + 46))
-                        context.stroke(path, with: .color(preferences.accentColor.opacity(0.38)),
-                                       style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    }
-                }
-                .frame(width: width, height: height)
-                ForEach(nodes) { task in
-                    if let position = layout[task.id] {
-                        Button { selectedTaskID = task.id } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 7) {
-                                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : preferences.accentColor)
-                                    Text(task.title).font(.headline).lineLimit(2)
-                                }
-                                Text(task.id == rootTaskID ? "主任务" : "子任务")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Spacer(minLength: 0)
-                                Text(task.displayStatusTitle)
-                                    .font(.caption).foregroundStyle(.secondary)
+        let layout = TaskTreeLayout.arrange(nodes.map { .init(id: $0.id, parentID: $0.parentTaskID) },
+                                            rootID: rootTaskID, collapsed: collapsedTaskIDs)
+        let visible = nodes.filter { layout.visibleIDs.contains($0.id) }
+        return GeometryReader { geometry in
+            let scale = graphFit ? min(1, max(0.7, min(geometry.size.width / layout.width,
+                                                     geometry.size.height / layout.height))) : 1.0
+            ScrollViewReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        Canvas { context, _ in
+                            for task in visible {
+                                guard let parentID = task.parentTaskID,
+                                      let start = layout.positions[parentID],
+                                      let end = layout.positions[task.id] else { continue }
+                                var path = Path()
+                                path.move(to: CGPoint(x: start.x + TaskTreeLayout.cardWidth,
+                                                      y: start.y + TaskTreeLayout.cardHeight / 2))
+                                path.addCurve(to: CGPoint(x: end.x, y: end.y + TaskTreeLayout.cardHeight / 2),
+                                              control1: CGPoint(x: start.x + TaskTreeLayout.cardWidth + 28,
+                                                                y: start.y + TaskTreeLayout.cardHeight / 2),
+                                              control2: CGPoint(x: end.x - 28,
+                                                                y: end.y + TaskTreeLayout.cardHeight / 2))
+                                context.stroke(path, with: .color(preferences.accentColor.opacity(0.38)),
+                                               style: StrokeStyle(lineWidth: 2, lineCap: .round))
                             }
-                            .padding(AppSpacing.x3)
-                            .frame(width: 246, height: 96, alignment: .topLeading)
-                            .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
-                            .overlay(RoundedRectangle(cornerRadius: AppRadius.control)
-                                .stroke(task.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) ? preferences.accentColor : .primary.opacity(0.1), lineWidth: task.id == (selectedTaskID ?? focusTaskID ?? rootTaskID) ? 2 : 1))
-                            .contentShape(RoundedRectangle(cornerRadius: AppRadius.control))
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(task.id == rootTaskID ? "主任务" : "子任务")，\(task.title)，\(task.displayStatusTitle)，选择作为添加目标")
-                        .contextMenu {
-                            Button("编辑任务") { selectedTaskID = task.id; editingTask = task }
-                            Button("添加子任务") { selectedTaskID = task.id }
+                        .frame(width: layout.width, height: layout.height)
+                        ForEach(visible) { task in
+                            if let point = layout.positions[task.id] {
+                                graphNode(task, hasChildren: nodes.contains { $0.parentTaskID == task.id })
+                                    .position(x: point.x + TaskTreeLayout.cardWidth / 2,
+                                              y: point.y + TaskTreeLayout.cardHeight / 2)
+                                    .id(task.id)
+                            }
                         }
-                        .position(x: position.x + 123, y: position.y + 48)
+                    }
+                    .frame(width: layout.width, height: layout.height)
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .frame(width: layout.width * scale, height: layout.height * scale,
+                           alignment: .topLeading)
+                }
+                .onChange(of: locateSelected) { _, _ in
+                    guard let id = selectedTask?.id else { return }
+                    let ancestors = TaskTreeProjection.path(to: id, in: allTasks).map(\.id)
+                    collapsedTaskIDs.subtract(ancestors)
+                    graphFit = false
+                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                }
+                .onAppear {
+                    if locateSelected, let id = selectedTask?.id {
+                        proxy.scrollTo(id, anchor: .center)
                     }
                 }
             }
-            .frame(width: width, height: height)
         }
         .background(preferences.accentColor.opacity(0.025))
     }
 
-    private func graphPositions(_ tasks: [TaskItem]) -> [UUID: CGPoint] {
-        var positions: [UUID: CGPoint] = [:]
-        var seen = Set<UUID>()
-        var row = 0
-        func place(_ task: TaskItem, depth: Int) {
-            guard seen.insert(task.id).inserted else { return }
-            positions[task.id] = CGPoint(x: 54 + CGFloat(depth) * 330,
-                                         y: 46 + CGFloat(row) * 132)
-            row += 1
-            for child in TaskTreeProjection.directChildren(of: task.id, in: tasks) {
-                place(child, depth: depth + 1)
+    private func graphNode(_ task: TaskItem, hasChildren: Bool) -> some View {
+        HStack(alignment: .top, spacing: AppSpacing.x1) {
+            Button { selectedTaskID = task.id } label: {
+                VStack(alignment: .leading, spacing: AppSpacing.x1) {
+                    HStack(spacing: AppSpacing.x1) {
+                        Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(task.isCompleted ? AppColors.taskCompleted(for: preferences) : preferences.accentColor)
+                        Text(task.title).font(AppTypography.callout.weight(.semibold)).lineLimit(2)
+                    }
+                    Spacer(minLength: 0)
+                    Text(task.id == rootTaskID ? "主任务 · \(task.displayStatusTitle)" : task.displayStatusTitle)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(task.title)，\(task.displayStatusTitle)，选择作为添加目标")
+            .accessibilityAddTraits(selectedTask?.id == task.id ? .isSelected : [])
+            if hasChildren {
+                Button {
+                    if !collapsedTaskIDs.insert(task.id).inserted { collapsedTaskIDs.remove(task.id) }
+                } label: {
+                    Image(systemName: collapsedTaskIDs.contains(task.id) ? "chevron.right" : "chevron.down")
+                        .frame(width: 24, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(collapsedTaskIDs.contains(task.id) ? "展开子任务" : "收起子任务")
             }
         }
-        if let root = tasks.first(where: { $0.id == rootTaskID }) { place(root, depth: 0) }
-        for task in tasks where !seen.contains(task.id) { place(task, depth: 0) }
-        return positions
+        .padding(AppSpacing.x2)
+        .frame(width: TaskTreeLayout.cardWidth, height: TaskTreeLayout.cardHeight)
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
+        .overlay(RoundedRectangle(cornerRadius: AppRadius.control)
+            .stroke(selectedTask?.id == task.id ? preferences.accentColor : .primary.opacity(0.1),
+                    lineWidth: selectedTask?.id == task.id ? 2 : 1))
+        .contextMenu {
+            Button("编辑任务") { selectedTaskID = task.id; editingTask = task }
+            Button("添加到此任务") { selectForAdding(task) }
+        }
     }
 
     private func addSubtask() {
         let title = newSubtaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, let parent = selectedTask else { return }
-        if store.addChild(title: title, to: parent.id) { newSubtaskTitle = "" }
+        let priorIDs = Set(store.tasks.map(\.id))
+        if store.addChild(title: title, to: parent.id) {
+            newSubtaskTitle = ""
+            addError = nil
+            if let created = store.tasks.first(where: { !priorIDs.contains($0.id) && $0.parentTaskID == parent.id }) {
+                selectedTaskID = created.id
+            }
+            addFieldFocused = true
+        } else {
+            addError = store.actionMessage ?? "无法添加子任务。"
+            store.actionMessage = nil
+            addFieldFocused = true
+        }
+    }
+
+    private func selectForAdding(_ task: TaskItem) {
+        selectedTaskID = task.id
+        addFieldFocused = true
     }
 
     private var taskList: some View {
-        ScrollView {
-            TaskList(tasks: allTasks, onSelect: { selectedTaskID = $0.id; editingTask = $0 })
-            .padding(AppSpacing.x6)
+        ScrollViewReader { proxy in
+            ScrollView {
+                TaskList(tasks: allTasks, onSelect: { selectedTaskID = $0.id },
+                         onEditTask: { selectedTaskID = $0.id; editingTask = $0 },
+                         onAddChildTask: selectForAdding,
+                         onShowBlueprint: { selectedTaskID = $0.id; mode = .blueprint; locateSelected.toggle() },
+                         selectedTaskID: selectedTask?.id, revealRequest: locateSelected,
+                         hidesDefaultMetadata: true, clarifiesChildScope: true)
+                .padding(AppSpacing.x6)
+            }
+            .onChange(of: locateSelected) { _, _ in
+                if let id = selectedTask?.id {
+                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                }
+            }
         }
     }
 
     private var quadrantList: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: AppSpacing.x4) {
-                ForEach(Quadrant.allCases) { quadrant in
-                    VStack(alignment: .leading, spacing: AppSpacing.x2) {
-                        Text(quadrant.title).font(.headline)
-                        ForEach(allTasks.filter { $0.quadrant == quadrant }) { task in
-                            TaskCard(task: task, compact: true, onSelect: { selectedTaskID = $0.id; editingTask = $0 })
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if geometry.size.width >= 700 {
+                        Grid(alignment: .topLeading, horizontalSpacing: AppSpacing.x4, verticalSpacing: AppSpacing.x4) {
+                            GridRow(alignment: .top) {
+                                quadrantCell(Quadrant.allCases[0])
+                                quadrantCell(Quadrant.allCases[1])
+                            }
+                            GridRow(alignment: .top) {
+                                quadrantCell(Quadrant.allCases[2])
+                                quadrantCell(Quadrant.allCases[3])
+                            }
+                        }
+                    } else {
+                        VStack(spacing: AppSpacing.x4) {
+                            ForEach(Quadrant.allCases) { quadrantCell($0) }
                         }
                     }
-                    .padding(AppSpacing.x4)
-                    .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
-                    .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
+                }
+                .padding(AppSpacing.x6)
+                .onChange(of: locateSelected) { _, _ in
+                    if let id = selectedTask?.id {
+                        quadrantFilter = .all
+                        DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                    }
                 }
             }
-            .padding(AppSpacing.x6)
         }
+    }
+
+    private func quadrantCell(_ quadrant: Quadrant) -> some View {
+        let tasks = allTasks.filter { $0.quadrant == quadrant &&
+            (quadrantFilter == .all || $0.needsAction) }
+        return VStack(alignment: .leading, spacing: AppSpacing.x2) {
+            HStack {
+                Text(quadrant.title).font(AppTypography.headline)
+                Spacer()
+                Text("\(tasks.count)").font(AppTypography.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if tasks.isEmpty {
+                Text(quadrantFilter == .all ? "暂无任务" : "暂无待处理任务")
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
+                    .padding(.vertical, AppSpacing.x2)
+            } else {
+                ForEach(tasks) { task in
+                    TaskCard(task: task, compact: true, onSelect: { selectedTaskID = $0.id },
+                             onEditTask: { selectedTaskID = $0.id; editingTask = $0 },
+                             onAddChildTask: selectForAdding,
+                             onShowBlueprint: { selectedTaskID = $0.id; mode = .blueprint; locateSelected.toggle() },
+                             isSelected: selectedTask?.id == task.id, clarifiesChildScope: true)
+                    .id(task.id)
+                }
+            }
+        }
+        .padding(AppSpacing.x4)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
     }
 }
 
