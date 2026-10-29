@@ -24,7 +24,7 @@ iOS 颜色由 `Colors.xcassets` 的 Any/Dark 变体提供，采用与分类设�
 
 `AppTypography` 提供 Large Title、Title、Headline、Body、Callout、Caption 语义角色。优先系统字体、系统字重，不固定行高。iOS 用系统 Dynamic Type 自动缩放；布局允许纵向增长，非必要不截断主要信息。macOS 保留现有字体偏好，但新页面采用角色样式，不新增一套固定字号。数字进度可使用 `monospacedDigit()`。
 
-macOS 需要应用用户字号与字体偏好时，使用 `AppTypography.desktop(_:scale:weight:design:)`。它从 AppKit 的系统文字角色读取基准大小，再应用用户的缩放与字体设计；「今日」页已接入此 API。iOS 继续使用现有系统语义字体与 Dynamic Type。
+macOS 应用文字角色以 `AppTypography` 统一管理：页面主标题 28pt、分区标题 20pt、任务标题 15pt、正文 14pt、辅助正文 13pt、元信息 12pt。`AppTypography.desktop(_:scale:weight:design:)` 取系统文字角色并应用对应的最低基准值，再应用用户字号缩放与字体设计；系统菜单与原生提示仍使用平台字体。`AppPreferences` 的缩小/放大选项继续生效，密度仅影响间距。iOS 继续使用现有系统语义字体与 Dynamic Type。
 
 ## 间距与形状
 

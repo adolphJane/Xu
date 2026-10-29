@@ -1,14 +1,13 @@
 import SwiftUI
 
 private enum CategoryLayout {
-    static let sidebarWidth: CGFloat = 258
-    static let sidebarMinimumHeight: CGFloat = 368
+    static let sidebarWidth: CGFloat = 228
     static let taskPanelMinimumHeight: CGFloat = 280
     static let checkboxSize: CGFloat = 18
     static let checkboxTargetWidth: CGFloat = 28
 }
 
-private enum CategorySelection: Hashable {
+enum CategorySelection: Hashable {
     case all
     case uncategorized
     case named(String)
@@ -35,7 +34,7 @@ private enum CategorySelection: Hashable {
     }
 }
 
-private enum CategoryTaskScope: String, CaseIterable, Identifiable {
+enum CategoryTaskScope: String, CaseIterable, Identifiable {
     case active = "待处理"
     case processed = "已处理"
     case all = "全部"
@@ -51,6 +50,12 @@ private enum CategoryTaskScope: String, CaseIterable, Identifiable {
     }
 }
 
+private struct CategoryEditRoute: Identifiable {
+    let id = UUID()
+    let name: String?
+    let symbol: String
+}
+
 struct TaskCategoriesView: View {
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
@@ -59,10 +64,7 @@ struct TaskCategoriesView: View {
 
     @State private var selection: CategorySelection = .all
     @State private var scope: CategoryTaskScope = .active
-    @State private var newCategory = ""
-    @State private var renameValue = ""
-    @State private var isRenaming = false
-    @State private var isDeleting = false
+    @State private var categoryEditRoute: CategoryEditRoute?
     @State private var isAddingTask = false
     @State private var blockingTask: TaskItem?
     @State private var addingChildTask: TaskItem?
@@ -78,19 +80,52 @@ struct TaskCategoriesView: View {
             return $0.createdAt > $1.createdAt
         }
     }
+    private var visibleGroups: [TaskSeriesGroup] {
+        TaskSeriesProjection.groups(matches: visibleTasks, allTasks: store.tasks)
+    }
+
+    init(initialSelection: CategorySelection = .all, initialScope: CategoryTaskScope = .active,
+         onSelect: @escaping (TaskItem) -> Void) {
+        _selection = State(initialValue: initialSelection)
+        _scope = State(initialValue: initialScope)
+        self.onSelect = onSelect
+    }
+
+    private var isFirstUse: Bool { store.tasks.isEmpty && store.categories.isEmpty }
+    private var selectedSymbol: String { symbol(for: selection) }
+    private func font(_ role: NSFont.TextStyle, weight: Font.Weight = .regular) -> Font {
+        AppTypography.desktop(role, scale: preferences.fontScale, weight: weight, design: preferences.fontStyle.design)
+    }
+    private func symbol(for category: CategorySelection) -> String {
+        switch category {
+        case .all: "square.stack"
+        case .uncategorized: "tray"
+        case .named(let name): store.categoryAppearance.symbol(for: name)
+        }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: AppSpacing.x8) {
-                heading
-                HStack(alignment: .top, spacing: AppSpacing.x5) {
-                    categoryPanel.frame(width: CategoryLayout.sidebarWidth)
-                    taskPanel.frame(maxWidth: .infinity, alignment: .leading)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.x7) {
+                    heading
+                    Divider()
+                    if geometry.size.width >= 800 * preferences.fontScale {
+                        HStack(alignment: .top, spacing: AppSpacing.x8) {
+                            categoryPanel.frame(width: CategoryLayout.sidebarWidth)
+                            Rectangle().fill(AppColors.border).frame(width: 1)
+                                .frame(minHeight: 560)
+                            taskPanel.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        compactCategoryPicker
+                        taskPanel
+                    }
                 }
+                .frame(maxWidth: 1180, alignment: .leading)
+                .padding(AppSpacing.x8)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 1180, alignment: .leading)
-            .padding(AppSpacing.x8)
-            .frame(maxWidth: .infinity)
         }
         .appDialog(isPresented: $isAddingTask) {
             TaskComposerView(category: selection.categoryName)
@@ -112,185 +147,173 @@ struct TaskCategoriesView: View {
                 Text(count == 0 ? "此操作无法撤销。" : "该任务及全部 \(count) 项后代任务都会删除。")
             }
         }
-        .appDialog(isPresented: $isRenaming) {
-            AppTextInputDialog(title: "重命名类别", message: "更新类别名称，所属事项将同步使用新名称。",
-                               prompt: "类别名称", text: $renameValue) { value in
-                guard let oldName = selection.categoryName else { return "请选择需要重命名的类别。" }
-                guard store.renameCategory(oldName, to: value) else { return "类别名称不能为空或与现有类别重复。" }
-                selection = .named(value)
-                return nil
-            }
+        .appDialog(item: $categoryEditRoute) { route in
+            CategoryEditor(name: route.name, symbol: route.symbol,
+                           onSave: { selection = .named($0) },
+                           onDelete: { selection = .uncategorized })
         }
-        .confirmationDialog("删除类别后，所属任务会变为未分类。", isPresented: $isDeleting) {
-            Button("删除类别", role: .destructive) {
-                if let name = selection.categoryName { store.deleteCategory(name) }
-                selection = .uncategorized
-            }
+        .onChange(of: store.categories) { _, names in
+            if let name = selection.categoryName, !names.contains(name) { selection = .all }
         }
     }
 
     private var heading: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.x3) {
-            HStack(spacing: AppSpacing.x2) {
-                Rectangle().fill(preferences.accentColor).frame(width: AppSpacing.x5, height: 1)
-                Text("ORGANIZE YOUR WORK")
-                    .font(AppTypography.caption.weight(.bold))
-                    .tracking(2)
-                    .foregroundStyle(preferences.accentColor)
+        HStack(alignment: .center, spacing: AppSpacing.x5) {
+            VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                Text("分类").font(font(.largeTitle, weight: .semibold))
+                Text("按生活与工作的不同侧面，整理每一件事。")
+                    .font(font(.callout)).foregroundStyle(AppColors.textSecondary)
             }
-            HStack(alignment: .bottom, spacing: AppSpacing.x5) {
-                VStack(alignment: .leading, spacing: AppSpacing.x2) {
-                    Text("任务分类").font(AppTypography.largeTitle)
-                    Text("把相近的事放在一起，让每一步都更清晰。")
-                        .font(AppTypography.callout).foregroundStyle(AppColors.textSecondary)
-                }
-                Spacer(minLength: AppSpacing.x4)
-                AppButton(title: "新建任务", systemImage: "plus", size: .prominent,
+            Spacer(minLength: AppSpacing.x3)
+            if !isFirstUse {
+                AppButton(title: "添加事项", systemImage: "plus", size: .prominent,
                           tint: preferences.accentColor) { isAddingTask = true }
             }
         }
     }
 
     private var categoryPanel: some View {
-        VStack(alignment: .leading, spacing: AppSpacing.x2) {
-            HStack {
-                caption("类别概览")
-                Spacer()
-                Text("\(store.tasks.count) 项任务")
-                    .font(AppTypography.caption.monospacedDigit())
-                    .foregroundStyle(AppColors.textSecondary)
-            }
-            .padding(.horizontal, AppSpacing.x2)
+        VStack(alignment: .leading, spacing: AppSpacing.x1) {
+            HStack { caption("任务范围"); Spacer(); caption("总数") }
+                .padding(.horizontal, AppSpacing.x3).padding(.bottom, AppSpacing.x2)
             categoryButton(.all, count: store.tasks.count)
             categoryButton(.uncategorized, count: store.tasks.filter { CategorySelection.uncategorized.includes($0) }.count)
-            Divider().padding(.vertical, AppSpacing.x2)
-            caption("我的类别").padding(.horizontal, AppSpacing.x2)
+            Divider().padding(.vertical, AppSpacing.x5).padding(.horizontal, AppSpacing.x3)
+            HStack { caption("我的类别"); Spacer(); caption("\(store.categories.count)") }
+                .padding(.horizontal, AppSpacing.x3).padding(.bottom, AppSpacing.x2)
             ForEach(store.categories, id: \.self) { name in
                 categoryButton(.named(name), count: store.tasks.filter { $0.category == name }.count)
             }
-            Divider().padding(.top, AppSpacing.x3)
-            caption("添加类别").padding(.top, AppSpacing.x2).padding(.horizontal, AppSpacing.x2)
-            HStack(spacing: AppSpacing.x2) {
-                TextField("输入类别名称…", text: $newCategory)
-                    .font(AppTypography.callout)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, AppSpacing.x3)
-                    .frame(height: 36)
-                    .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.small))
-                    .overlay(RoundedRectangle(cornerRadius: AppRadius.small).stroke(AppColors.border, lineWidth: 1))
-                    .onSubmit(addCategory)
-                    .accessibilityLabel("新类别名称")
-                Button(action: addCategory) {
-                    Image(systemName: "plus")
-                        .font(AppTypography.callout.weight(.medium))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.small))
-                .overlay(RoundedRectangle(cornerRadius: AppRadius.small).stroke(AppColors.border, lineWidth: 1))
-                .disabled(newCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .help("添加类别")
-                .accessibilityLabel("添加类别")
+            Button { editCategory(nil) } label: {
+                Label("新建类别", systemImage: "plus")
+                    .font(font(.callout)).foregroundStyle(preferences.accentColor)
+                    .padding(.horizontal, AppSpacing.x3).frame(minHeight: 44)
             }
+            .buttonStyle(.plain).padding(.top, AppSpacing.x3)
+            Text("右侧数字为全部状态的任务数")
+                .font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
+                .padding(.horizontal, AppSpacing.x3).padding(.top, AppSpacing.x3)
         }
-        .padding(AppSpacing.x4)
-        .frame(minHeight: CategoryLayout.sidebarMinimumHeight, alignment: .topLeading)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
-        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border.opacity(0.55)))
+    }
+
+    private var compactCategoryPicker: some View {
+        HStack(spacing: AppSpacing.x3) {
+            Picker("类别", selection: $selection) {
+                Label("所有类别（\(store.tasks.count)）", systemImage: "square.stack").tag(CategorySelection.all)
+                Label("未分类", systemImage: "tray").tag(CategorySelection.uncategorized)
+                ForEach(store.categories, id: \.self) { name in
+                    Label(name, systemImage: store.categoryAppearance.symbol(for: name)).tag(CategorySelection.named(name))
+                }
+            }
+            .labelsHidden().accessibilityLabel("选择类别")
+            Spacer(minLength: 0)
+            Button { editCategory(nil) } label: { Label("新建类别", systemImage: "plus") }
+        }
+    }
+
+    private func editCategory(_ name: String?) {
+        categoryEditRoute = CategoryEditRoute(name: name,
+                                             symbol: name.map { store.categoryAppearance.symbol(for: $0) } ?? "tag")
     }
 
     private var taskPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: AppSpacing.x3) {
-                Image(systemName: selection == .all ? "square.stack" : "tag")
-                    .font(AppTypography.headline)
-                    .foregroundStyle(preferences.accentColor)
-                    .frame(width: AppSpacing.x8, height: AppSpacing.x8)
-                    .background(preferences.accentColor.opacity(0.11), in: RoundedRectangle(cornerRadius: AppRadius.small))
-                VStack(alignment: .leading, spacing: AppSpacing.x1) {
-                    Text(selection.title).font(AppTypography.title)
-                    Text("\(selectedTasks.count) 项任务 · \(selectedTasks.filter(\.needsAction).count) 项待处理")
-                        .font(AppTypography.caption.monospacedDigit())
-                        .foregroundStyle(AppColors.textSecondary)
-                }
-                Spacer(minLength: AppSpacing.x2)
-                if selection.categoryName != nil {
-                    Menu {
-                        Button("重命名类别") { renameValue = selection.title; isRenaming = true }
-                        Button("删除类别", role: .destructive) { isDeleting = true }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .frame(width: AppSpacing.x8, height: AppSpacing.x8)
-                            .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: AppSpacing.x5) {
+            if !isFirstUse {
+                HStack(alignment: .center, spacing: AppSpacing.x3) {
+                    Image(systemName: selectedSymbol).font(font(.title2))
+                        .foregroundStyle(preferences.accentColor).frame(width: 48, height: 48)
+                        .background(preferences.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: AppRadius.control))
+                    VStack(alignment: .leading, spacing: AppSpacing.x1) {
+                        Text(selection.title).font(font(.title1, weight: .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(selectedTasks.count) 项任务 · \(selectedTasks.filter(\.needsAction).count) 项待处理 · \(visibleGroups.filter(\.isSeries).count) 个系列")
+                            .font(font(.caption1)).monospacedDigit().foregroundStyle(AppColors.textSecondary)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .help("管理类别")
-                    .accessibilityLabel("管理\(selection.title)类别")
-                }
-            }
-            .padding(.horizontal, AppSpacing.x7)
-            .padding(.top, AppSpacing.x6)
-            .padding(.bottom, AppSpacing.x5)
-            HStack(alignment: .center) {
-                HStack(spacing: AppSpacing.x1) {
-                    ForEach(CategoryTaskScope.allCases) { option in
-                        scopeButton(option)
+                    Spacer(minLength: AppSpacing.x2)
+                    if let name = selection.categoryName {
+                        Button { editCategory(name) } label: { Label("编辑类别", systemImage: "pencil") }
+                            .buttonStyle(.plain).font(font(.callout)).foregroundStyle(AppColors.textSecondary)
+                            .frame(minHeight: 36).accessibilityLabel("编辑类别")
                     }
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("任务状态")
-                Spacer(minLength: AppSpacing.x3)
-                Label("按计划时间排序", systemImage: "clock")
-                    .font(AppTypography.caption)
-                    .foregroundStyle(AppColors.textSecondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        scopeControls
+                        Spacer(minLength: AppSpacing.x3)
+                        sortLabel
+                    }
+                    VStack(alignment: .leading, spacing: AppSpacing.x2) { scopeControls; sortLabel }
+                }
+                Divider()
             }
-            .padding(.horizontal, AppSpacing.x7)
-            .padding(.bottom, AppSpacing.x4)
-            Divider()
             if visibleTasks.isEmpty {
-                AppEmptyState(
-                    title: scope == .active ? "这个类别还没有待处理任务" : "这里还没有任务",
-                    message: scope == .active ? "新建一项任务，或切换状态查看已有记录。" : "可以切换任务状态，或新建任务。",
-                    systemImage: "tag",
-                    actionTitle: "新建任务",
-                    tint: preferences.accentColor
-                ) { isAddingTask = true }
-                .frame(maxWidth: .infinity, minHeight: 350)
+                emptyState.frame(maxWidth: .infinity, minHeight: 350)
             } else {
                 LazyVStack(spacing: 0) {
-                    ForEach(visibleTasks) { task in
-                        taskRow(task)
-                        if task.id != visibleTasks.last?.id { Divider() }
+                    ForEach(visibleGroups) { group in
+                        if group.isSeries {
+                            HStack(spacing: AppSpacing.x2) {
+                                Label("任务系列", systemImage: "point.3.connected.trianglepath.dotted")
+                                    .font(font(.callout, weight: .semibold))
+                                Text(group.root.title).lineLimit(2)
+                                Spacer()
+                                Text("\(group.matches.count) 项")
+                                    .font(font(.caption1)).monospacedDigit()
+                            }
+                            .foregroundStyle(AppColors.textSecondary)
+                            .padding(.vertical, AppSpacing.x3)
+                            .accessibilityElement(children: .combine)
+                        }
+                        ForEach(group.rows.filter { !$0.isContext }) { row in
+                            taskRow(row.task)
+                                .padding(.leading, group.isSeries ? CGFloat(min(row.depth, 4)) * AppSpacing.x4 : 0)
+                            Divider()
+                        }
                     }
                 }
-                .padding(.horizontal, AppSpacing.x7)
-                .padding(.top, AppSpacing.x1)
-                HStack {
-                    Text("显示 \(visibleTasks.count) 项任务")
-                        .font(AppTypography.caption.monospacedDigit())
-                        .foregroundStyle(AppColors.textSecondary)
+                HStack(alignment: .top) {
+                    Text("显示 \(visibleTasks.count) 项" + (scope == .processed ? " · 包含已完成与已取消" : ""))
                     Spacer()
-                    if scope != .all {
-                        Button("查看全部任务 →") { scope = .all }
-                            .font(AppTypography.caption.weight(.semibold))
-                            .foregroundStyle(preferences.accentColor)
-                            .buttonStyle(.plain)
-                    }
+                    Text(scope == .active ? "未安排时间的事项置于末尾" : "按任务创建时间展示")
                 }
-                .padding(.horizontal, AppSpacing.x7)
-                .padding(.top, AppSpacing.x4)
-                .padding(.bottom, AppSpacing.x5)
+                .font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: CategoryLayout.taskPanelMinimumHeight, alignment: .topLeading)
-        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.card))
-        .overlay(RoundedRectangle(cornerRadius: AppRadius.card).stroke(AppColors.border.opacity(0.55)))
+    }
+
+    private var scopeControls: some View {
+        HStack(spacing: AppSpacing.x1) {
+            ForEach(CategoryTaskScope.allCases) { scopeButton($0) }
+        }
+        .accessibilityElement(children: .contain).accessibilityLabel("任务状态")
+    }
+
+    private var sortLabel: some View {
+        Label(scope == .active ? "按计划时间升序" : "按创建时间降序",
+              systemImage: scope == .active ? "clock" : "arrow.up.arrow.down")
+            .font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        if isFirstUse {
+            AppEmptyState(title: "先从一个类别开始", message: "为工作、生活或兴趣留一个位置。", systemImage: "tag",
+                          actionTitle: "新建类别", tint: preferences.accentColor) { editCategory(nil) }
+        } else if selectedTasks.isEmpty {
+            AppEmptyState(title: selection == .uncategorized ? "所有任务都已有归属" : "这个类别还没有事项",
+                          message: selection == .uncategorized ? "新收集、尚未归类的事项会出现在这里。" : "添加第一件事，让计划从这里开始。",
+                          systemImage: selectedSymbol)
+        } else if scope == .active {
+            AppEmptyState(title: "这里的事项都已处理", message: "可以查看已处理记录，或添加新的事项。",
+                          systemImage: "checkmark.circle", actionTitle: "查看已处理", tint: preferences.accentColor) { scope = .processed }
+        } else {
+            AppEmptyState(title: "还没有已处理的事项", message: "完成或取消的事项会保留在这里。",
+                          systemImage: "tray", actionTitle: "查看待处理", tint: preferences.accentColor) { scope = .active }
+        }
     }
 
     private func caption(_ title: String) -> some View {
-        Text(title).font(AppTypography.caption.weight(.semibold)).foregroundStyle(AppColors.textSecondary)
+        Text(title).font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
     }
 
     private func scopeButton(_ option: CategoryTaskScope) -> some View {
@@ -305,11 +328,11 @@ struct TaskCategoriesView: View {
                 Text(option.rawValue)
                 Text("\(count)").monospacedDigit()
             }
-            .font(AppTypography.caption.weight(isSelected ? .bold : .medium))
+            .font(font(.caption1, weight: isSelected ? .medium : .regular))
             .foregroundStyle(isSelected ? preferences.accentColor : AppColors.textSecondary)
             .padding(.horizontal, AppSpacing.x3)
             .frame(minHeight: AppSpacing.x8)
-            .background(isSelected ? preferences.accentColor.opacity(0.12) : .clear,
+            .background(isSelected ? preferences.cardBackground : .clear,
                         in: RoundedRectangle(cornerRadius: AppRadius.small))
             .contentShape(Rectangle())
         }
@@ -321,13 +344,13 @@ struct TaskCategoriesView: View {
     private func categoryButton(_ category: CategorySelection, count: Int) -> some View {
         Button { selection = category } label: {
             HStack(spacing: AppSpacing.x3) {
-                Image(systemName: category == .all ? "square.stack" : "tag")
-                    .font(AppTypography.callout).frame(width: AppSpacing.x4)
-                Text(category.title).lineLimit(1)
+                Image(systemName: symbol(for: category))
+                    .font(font(.callout)).frame(width: AppSpacing.x5)
+                Text(category.title).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: AppSpacing.x1)
-                Text("\(count)").font(AppTypography.caption.monospacedDigit())
+                Text("\(count)").font(font(.caption1)).monospacedDigit()
             }
-            .font(AppTypography.callout.weight(selection == category ? .semibold : .regular))
+            .font(font(.body, weight: selection == category ? .medium : .regular))
             .foregroundStyle(selection == category ? preferences.accentColor : AppColors.textPrimary)
             .padding(.horizontal, AppSpacing.x3)
             .frame(minHeight: 44)
@@ -336,7 +359,7 @@ struct TaskCategoriesView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(category.title)，\(count) 项任务")
+        .accessibilityLabel("\(category.title)，全部状态共 \(count) 项任务")
         .accessibilityAddTraits(selection == category ? .isSelected : [])
     }
 
@@ -344,20 +367,20 @@ struct TaskCategoriesView: View {
         HStack(alignment: .top, spacing: 0) {
             Button {
                 withAnimation(AppTheme.animation(reduceMotion: preferences.reduceMotion || reduceMotion)) {
-                    store.toggle(task)
+                    if task.isCancelled { store.restore(task) } else { store.toggle(task) }
                 }
             } label: {
-                RoundedRectangle(cornerRadius: AppRadius.small / 2)
+                Circle()
                     .fill(task.isCompleted ? AppColors.taskCompleted(for: preferences) : .clear)
                     .overlay {
-                        RoundedRectangle(cornerRadius: AppRadius.small / 2)
+                        Circle()
                             .stroke(task.isCompleted ? AppColors.taskCompleted(for: preferences) : AppColors.textSecondary.opacity(0.65), lineWidth: 1.5)
                     }
                     .overlay {
-                        if task.isCompleted {
-                            Image(systemName: "checkmark")
-                                .font(AppTypography.caption.weight(.bold))
-                                .foregroundStyle(AppColors.foreground(on: AppColors.taskCompleted(for: preferences)))
+                        if task.isCompleted || task.isCancelled {
+                            Image(systemName: task.isCancelled ? "minus" : "checkmark")
+                                .font(font(.caption1, weight: .semibold))
+                                .foregroundStyle(task.isCancelled ? AppColors.textSecondary : AppColors.foreground(on: AppColors.taskCompleted(for: preferences)))
                         }
                     }
                     .frame(width: CategoryLayout.checkboxSize, height: CategoryLayout.checkboxSize)
@@ -366,29 +389,36 @@ struct TaskCategoriesView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!task.isCompleted && store.executionBlockReason(for: task) != nil)
-            .help(task.isCompleted ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
-            .accessibilityLabel(task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
+            .disabled(task.needsAction && store.executionBlockReason(for: task) != nil)
+            .help(!task.needsAction ? "恢复为待完成" : (store.executionBlockReason(for: task) ?? "标记完成"))
+            .accessibilityLabel(!task.needsAction ? "恢复\(task.title)" : "完成\(task.title)")
             Button { onSelect(task) } label: {
                 VStack(alignment: .leading, spacing: AppSpacing.x2) {
                     Text(task.title)
-                        .font(AppTypography.headline)
-                        .foregroundStyle(AppColors.textPrimary)
+                        .font(font(.body, weight: .medium))
+                        .foregroundStyle(task.needsAction ? AppColors.textPrimary : AppColors.textSecondary)
                         .strikethrough(task.isCompleted || task.isCancelled)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: AppSpacing.x2) {
-                        if !task.isUnscheduled {
-                            Label {
-                                Text(scheduleLabel(for: task))
-                            } icon: { Image(systemName: "calendar") }
+                    VStack(alignment: .leading, spacing: AppSpacing.x1) {
+                        HStack(spacing: AppSpacing.x3) {
+                            Label(task.isUnscheduled ? "未安排时间" : scheduleLabel(for: task), systemImage: "calendar")
+                            if task.needsAction && task.estimatedMinutes > 0 { Text("预计 \(task.estimatedMinutes) 分钟") }
+                            if !task.isPending { Text(task.displayStatusTitle) }
                         }
-                        if task.projectName != "未归类项目" { Text("· \(task.projectName)") }
-                        if !task.isPending { Text("· \(task.displayStatusTitle)") }
+                        if let reason = task.blockReason, task.effectiveStatus == .blocked, !reason.isEmpty {
+                            Text("受阻 · \(reason)")
+                        }
+                        if let parentID = task.parentTaskID, let parent = store.tasks.first(where: { $0.id == parentID }) {
+                            Text("父任务：\(parent.title)")
+                        }
+                        if selection == .all {
+                            Label(task.categoryName, systemImage: store.categoryAppearance.symbol(for: task.category))
+                        }
+                        if task.projectName != "未归类项目" { Text(task.projectName) }
                     }
-                    .font(AppTypography.caption)
-                    .foregroundStyle(AppColors.textSecondary)
-                    .lineLimit(2)
+                    .font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.leading, AppSpacing.x1)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
@@ -398,22 +428,21 @@ struct TaskCategoriesView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .accessibilityLabel("查看\(task.title)，\(task.displayStatusTitle)")
             HStack(alignment: .center, spacing: AppSpacing.x3) {
-                if selection == .all {
-                    Text(task.categoryName)
-                        .font(AppTypography.caption.weight(.medium))
-                        .foregroundStyle(preferences.accentColor)
-                        .lineLimit(1)
-                        .frame(maxWidth: 120)
-                        .padding(.horizontal, AppSpacing.x2)
-                        .padding(.vertical, AppSpacing.x1)
-                        .background(preferences.accentColor.opacity(0.11), in: RoundedRectangle(cornerRadius: AppRadius.small))
-                        .fixedSize(horizontal: true, vertical: false)
+                if task.needsAction {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: AppSpacing.x2) {
+                            Circle().fill(AppColors.textSecondary).frame(width: AppSpacing.x1, height: AppSpacing.x1)
+                            Text(task.quadrant.title).font(font(.caption1))
+                        }.foregroundStyle(AppColors.textSecondary)
+                        Text(task.quadrant.title).font(font(.caption1)).foregroundStyle(AppColors.textSecondary)
+                    }
+                    .accessibilityLabel(task.quadrant.title)
                 }
                 Menu {
                     Menu("更改类别") {
-                        Button("未分类") { move(task, to: nil) }.disabled(task.category == nil)
+                        Button { move(task, to: nil) } label: { Label("未分类", systemImage: "tray") }.disabled(task.category == nil)
                         ForEach(store.categories, id: \.self) { name in
-                            Button(name) { move(task, to: name) }.disabled(task.category == name)
+                            Button { move(task, to: name) } label: { Label(name, systemImage: store.categoryAppearance.symbol(for: name)) }.disabled(task.category == name)
                         }
                     }
                     Divider()
@@ -469,7 +498,7 @@ struct TaskCategoriesView: View {
             .frame(height: 36)
             .padding(.leading, AppSpacing.x3)
         }
-        .padding(.vertical, AppSpacing.x4)
+        .padding(.vertical, preferences.density == .compact ? AppSpacing.x3 : preferences.density == .spacious ? AppSpacing.x6 : AppSpacing.x5)
     }
 
     private func scheduleLabel(for task: TaskItem) -> String {
@@ -478,16 +507,6 @@ struct TaskCategoriesView: View {
         if Calendar.current.isDateInToday(date) { return "今天 \(time)" }
         if Calendar.current.isDateInTomorrow(date) { return "明天 \(time)" }
         return date.formatted(.dateTime.month().day().hour().minute())
-    }
-
-    private func addCategory() {
-        let name = newCategory.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        store.addCategory(name)
-        if let saved = store.categories.first(where: { $0.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
-            selection = .named(saved)
-        }
-        newCategory = ""
     }
 
     private func move(_ task: TaskItem, to category: String?) {
@@ -512,4 +531,11 @@ struct TaskCategoriesView: View {
         .environmentObject(AppPreferences())
         .preferredColorScheme(.light)
         .frame(width: 1000, height: 700)
+}
+
+#Preview("分类 · 深色空态") {
+    TaskCategoriesView(onSelect: { _ in })
+        .environmentObject(TaskStore(inMemory: true))
+        .environmentObject(AppPreferences())
+        .preferredColorScheme(.dark).frame(width: 1000, height: 700)
 }

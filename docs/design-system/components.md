@@ -15,7 +15,19 @@
 
 ## 类别选择
 
-macOS 编辑事项的类别使用 `TaskCategoryField(allowsCustomInput: false)`，通过宽度固定、值与箭头两端对齐的按钮打开自绘 `TaskCategoryOptions`，不使用系统菜单选项样式。面板顶部显示「未分类」，下方类别列表支持滚动、长名称换行、悬停反馈与勾选状态；主题强调色跟随 `AppPreferences`，VoiceOver 可识别选中项。点击选项即更新表单并关闭，关闭按钮或点弹层外侧可退出。新建事项仍可输入类别。Gallery 和 Preview 覆盖有类别、长中文和空态。
+macOS 创建与编辑事项的类别统一使用 `TaskCategoryField`，通过宽度固定、值与箭头两端对齐的按钮打开自绘 `TaskCategoryOptions`，不使用系统菜单选项样式。面板顶部显示「未分类」，下方类别列表支持滚动、长名称换行、悬停反馈与勾选状态；主题强调色跟随 `AppPreferences`，VoiceOver 可识别选中项。点击选项即更新表单并关闭，关闭按钮或点弹层外侧可退出。新增类别统一到分类页面管理。Gallery 和 Preview 覆盖有类别、长中文和空态。
+
+创建与编辑事项共用 `TaskNotesField`：清晰的备注标题、原生多行输入、语义正文文字和表面边框；编辑表单已有分区标题时隐藏组件内的重复标题。Gallery 和 Preview 覆盖长备注。
+
+类别选择按钮、`TaskCategoryOptions` 与任务改类菜单均读取 `TaskStore.categoryAppearance` 的同一份图标偏好；未分类使用托盘，旧类别或不可用图标回退为标签。`TaskCategoryOptions.symbols` 为可选参数，独立 Preview 无须连接持久化。
+
+## macOS 类别编辑与图标库
+
+`CategoryEditor` 用 `appDialog` 同时编辑名称和图标。名称与图标保持为草稿，保存时才更新类别；重名错误留在输入处，取消、外侧点击与 Escape 经 `onAppDialogCancel` 统一检查未保存修改。删除类别使用系统确认，说明受影响任务数及移至未分类的结果。
+
+`CategoryIconPicker` 为嵌套 `appDialog`，提供 55 个精选 SF Symbols、中文/关键词/英文符号名搜索、分组、最近使用和已选预览。点击只更改候选，“使用此图标”返回上层草稿；取消不修改草稿。最近使用最多 9 个，无记录时隐藏该分区。不可用符号不进入网格，已保存符号不可用时回退 `tag`。所有图标具有名称与选中读屏语义；网格按钮保留可见焦点、方向键导航与至少 44pt 点击区域，选中同时使用边框和勾号。主题、字号与字体偏好跟随 `AppPreferences`；间距、圆角和文字采用现有 token。
+
+图标和历史记录为本机显示偏好，保存到独立的 `quadrant.categoryAppearance.v1`；不增加 `TaskItem`、SwiftData 或备份/同步字段。重命名迁移图标键，删除清理映射；内存预览不读写真实类别偏好。Gallery 提供真实编辑/嵌套选择入口，Preview 覆盖长中文与深色。
 
 ## 页面按钮尺寸
 
@@ -41,7 +53,7 @@ macOS 页面使用用户自定义强调色时，可为 `AppEmptyState` 的操作
 
 ## macOS 统一业务弹窗
 
-所有 macOS 详情、创建、编辑、选择和预览使用 `appDialog(isPresented:)` 或 `appDialog(item:)`。添加事项的预加载入口与其他弹窗共用 `AppDialogPanel`、`AppDialogContainer` 和 `AppDialogPresentation`：透明 `NSPanel` 跟随宿主窗口，统一居中遮罩、`AppRadius.prominent` 表面、modal 阴影，以及 92% 放大淡入 / 96% 缩小淡出。内容在展示前测量尺寸，超出宿主可用区域时可滚动，不裁掉操作按钮。系统/应用 Reduce Motion 均跳过位移、缩放与动画等待。
+所有 macOS 短流程详情、创建、编辑、选择和预览使用 `appDialog(isPresented:)` 或 `appDialog(item:)`。任务蓝图与项目蓝图是主窗口工作区页面，通过页面路由打开；其中的节点编辑等短流程继续使用 `appDialog`。添加事项的预加载入口与其他弹窗共用 `AppDialogPanel`、`AppDialogContainer` 和 `AppDialogPresentation`：透明 `NSPanel` 跟随宿主窗口，统一居中遮罩、`AppRadius.prominent` 表面、modal 阴影，以及 92% 放大淡入 / 96% 缩小淡出。内容在展示前测量尺寸，超出宿主可用区域时可滚动，不裁掉操作按钮。系统/应用 Reduce Motion 均跳过位移、缩放与动画等待。
 
 内容用 `@AppDismiss` 关闭；呈现绑定也可直接设为 false。外侧点击与 Escape 默认关闭当前层，有草稿的表单用 `onAppDialogCancel` 复用取消按钮的未保存确认；确认未完成时面板继续保留。嵌套弹窗只关闭最上层并恢复上层焦点，关闭完成后才执行 `onDismiss` 和后续导航。普通业务页面禁止直接使用 sheet、popover 或独立窗口动画；系统错误提示、危险操作确认、文件选择与授权继续使用原生系统面板，iOS/iPadOS 继续原生 sheet。
 

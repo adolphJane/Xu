@@ -3,6 +3,7 @@ import SwiftUI
 extension Notification.Name {
     static let showTaskBlueprint = Notification.Name("sequence.showTaskBlueprint")
     static let focusBlueprintTask = Notification.Name("sequence.focusBlueprintTask")
+    static let showBlueprint = Notification.Name("sequence.showBlueprint")
 }
 
 enum TaskBlueprintNavigation {
@@ -35,6 +36,7 @@ struct TaskBlueprintView: View {
     @EnvironmentObject private var preferences: AppPreferences
     let rootTaskID: UUID
     var focusTaskID: UUID? = nil
+    var onClose: (() -> Void)? = nil
     @State private var mode: TaskBlueprintMode = .blueprint
     @State private var editingTask: TaskItem?
     @State private var newSubtaskTitle = ""
@@ -46,9 +48,11 @@ struct TaskBlueprintView: View {
     @State private var addError: String?
     @FocusState private var addFieldFocused: Bool
 
-    init(rootTaskID: UUID, focusTaskID: UUID? = nil, initialMode: TaskBlueprintMode = .blueprint) {
+    init(rootTaskID: UUID, focusTaskID: UUID? = nil, initialMode: TaskBlueprintMode = .blueprint,
+         onClose: (() -> Void)? = nil) {
         self.rootTaskID = rootTaskID
         self.focusTaskID = focusTaskID
+        self.onClose = onClose
         _mode = State(initialValue: initialMode)
     }
 
@@ -75,12 +79,14 @@ struct TaskBlueprintView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(root.title).font(.title2.weight(.semibold))
                         Text(children.isEmpty ? "任务蓝图 · 从这项任务开始拆解" : "全部后代 \(children.filter(\.isCompleted).count)/\(children.count) 已完成")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(AppTypography.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("关闭", systemImage: "xmark") { dismiss() }
+                    Button(onClose == nil ? "关闭" : "返回", systemImage: onClose == nil ? "xmark" : "chevron.left") {
+                        if let onClose { onClose() } else { dismiss() }
+                    }
                         .labelStyle(.iconOnly)
-                        .accessibilityLabel("关闭任务蓝图")
+                        .accessibilityLabel(onClose == nil ? "关闭任务蓝图" : "返回工作区")
                 }
                 .padding(AppSpacing.x6)
                 if !children.isEmpty {
@@ -159,7 +165,7 @@ struct TaskBlueprintView: View {
                 ContentUnavailableView("任务不存在", systemImage: "exclamationmark.triangle")
             }
         }
-        .frame(minWidth: 680, minHeight: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(preferences.pageBackground)
         .appDialog(item: $editingTask) { task in
             TaskEditor(task: task, onRequestBlueprint: { _ in })

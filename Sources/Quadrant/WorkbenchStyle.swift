@@ -53,6 +53,8 @@ struct WorkbenchTopBar: View {
                 Button("墨色", systemImage: "moon.stars") { setTheme(.ink) }
             } label: {
                 Label(preferences.resolvedPreset.rawValue, systemImage: "paintpalette")
+                    .frame(minWidth: 96, minHeight: 40)
+                    .contentShape(Rectangle())
             }
             .help("切换皮肤")
         }

@@ -22,7 +22,7 @@ private enum TaskPlanChoice: String, CaseIterable, Identifiable {
     case today = "今天"
     case tomorrow = "明天"
     case custom = "选日期"
-    case inbox = "收集箱"
+    case inbox = "暂不安排"
 
     var id: Self { self }
 }
@@ -56,6 +56,7 @@ struct TaskComposerView: View {
     @State private var showDiscardConfirmation = false
     @State private var navigationTaskID: UUID?
     @State private var navigationBlueprintID: UUID?
+    @State private var shouldNavigateAfterClose = false
     @State private var blueprintID: UUID?
     @State private var stageID: UUID?
     @State private var milestoneID: UUID?
@@ -67,6 +68,7 @@ struct TaskComposerView: View {
     @State private var reportCategory: ReportCategory = .projectProgress
     @State private var planChoice: TaskPlanChoice = .today
     @State private var customDate = Date.now
+    @State private var displayedPlanMonth: Date?
     @State private var completedAt = Date.now
     @State private var estimatedMinutes = 30
     @State private var hasDeadline = false
@@ -83,10 +85,12 @@ struct TaskComposerView: View {
 
     init(mode: TaskComposerMode = .task, blueprintID: UUID? = nil, category: String? = nil,
          opensBlueprintOnSave: Bool = true,
+         startsInInbox: Bool = false,
          isPresentationActive: Bool = true) {
         _mode = State(initialValue: mode)
         _blueprintID = State(initialValue: blueprintID)
         _category = State(initialValue: category ?? "")
+        _planChoice = State(initialValue: startsInInbox ? .inbox : .today)
         self.opensBlueprintOnSave = opensBlueprintOnSave
         self.isPresentationActive = isPresentationActive
     }
@@ -100,7 +104,7 @@ struct TaskComposerView: View {
     private var isAIInput: Bool { mode == .ai && !hasAIDraft }
     private var composerHeight: CGFloat {
         if isAIInput { return selectedImageData == nil ? 450 : 590 }
-        if showDetails || !subtasks.isEmpty || isAddingSubtask { return 690 }
+        if showDetails || planChoice == .custom || !subtasks.isEmpty || isAddingSubtask { return 690 }
         return 575
     }
     private var cleanTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -116,13 +120,20 @@ struct TaskComposerView: View {
             modeSelector
                 .padding(.horizontal, 25)
                 .padding(.bottom, 13)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 19) {
-                    if isAIInput { aiInput } else { taskFields }
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 19) {
+                        if isAIInput { aiInput } else { taskFields }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 25)
+                    .padding(.vertical, 15)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 25)
-                .padding(.vertical, 15)
+                .onChange(of: planChoice) { _, choice in
+                    if choice == .custom {
+                        withAnimation(motion) { scrollProxy.scrollTo("plan-calendar", anchor: .top) }
+                    }
+                }
             }
             footer
         }
@@ -162,7 +173,7 @@ struct TaskComposerView: View {
             }
         }
         .onDisappear {
-            guard let navigationTaskID else { return }
+            guard shouldNavigateAfterClose, let navigationTaskID else { return }
             NotificationCenter.default.post(
                 name: opensBlueprintOnSave ? .showTaskBlueprint : .focusBlueprintTask,
                 object: navigationTaskID,
@@ -192,13 +203,14 @@ struct TaskComposerView: View {
                 Text("添加事项")
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
                 Text("快速记录，再决定如何安排。")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Button { cancel() } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                                weight: .semibold, design: preferences.fontStyle.design))
                     .frame(width: 27, height: 27)
                     .background(.primary.opacity(0.06), in: Circle())
             }
@@ -223,7 +235,9 @@ struct TaskComposerView: View {
                     focusInput()
                 } label: {
                     Label(option.rawValue, systemImage: option.icon)
-                        .font(.system(size: 12, weight: mode == option ? .semibold : .medium))
+                        .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                                    weight: mode == option ? .semibold : .medium,
+                                                    design: preferences.fontStyle.design))
                         .frame(maxWidth: .infinity)
                         .frame(height: 35)
                         .foregroundStyle(mode == option ? preferences.accentColor : .secondary)
@@ -253,9 +267,10 @@ struct TaskComposerView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(preferences.accentColor.opacity(0.25)))
                 .onSubmit { if hasAIInput { Task { await parseAI() } } }
             HStack(spacing: AppSpacing.x3) {
-                Button(selectedImageData == nil ? "选择图片" : "更换图片", systemImage: "photo.on.rectangle") {
-                    isChoosingImage = true
-                }
+                AppButton(title: selectedImageData == nil ? "选择图片" : "更换图片",
+                          systemImage: "photo.on.rectangle", kind: .secondary,
+                          tint: preferences.accentColor) { isChoosingImage = true }
+                    .disabled(store.isAIParsing)
                 if let selectedImageData, let image = NSImage(data: selectedImageData) {
                     Image(nsImage: image)
                         .resizable()
@@ -263,7 +278,7 @@ struct TaskComposerView: View {
                         .frame(width: 72, height: 72)
                         .accessibilityLabel("待识别图片预览")
                     Text(selectedImageName ?? "已选择图片")
-                        .font(.caption)
+                        .font(AppTypography.caption)
                         .lineLimit(2)
                     Button("移除图片", systemImage: "xmark.circle") {
                         self.selectedImageData = nil
@@ -271,25 +286,27 @@ struct TaskComposerView: View {
                         imageImportError = nil
                     }
                     .labelStyle(.iconOnly)
+                    .frame(width: 36, height: 36)
                     .accessibilityLabel("移除图片")
+                    .disabled(store.isAIParsing)
                 }
             }
             Text("图片和补充说明会发送到设置中的 AI 接口。AI 会生成可编辑的主任务与子任务，确认后才保存。")
-                .font(.caption)
+                .font(AppTypography.caption)
                 .foregroundStyle(.secondary)
             if let imageImportError {
                 Label(imageImportError, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(AppColors.danger)
             }
             if let feedback {
                 Label(feedback, systemImage: "checkmark.circle.fill")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(preferences.accentColor)
             }
             if let error = store.aiTaskError {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                 if !cleanSentence.isEmpty {
@@ -316,7 +333,8 @@ struct TaskComposerView: View {
         VStack(alignment: .leading, spacing: 17) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(mode == .completed ? "完成了什么？" : "要做什么？")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                                weight: .semibold, design: preferences.fontStyle.design))
                     .foregroundStyle(.secondary)
                 TextField(mode == .completed ? "例如：完成支付链路回归" : "例如：完成渠道适配登录联调", text: $title)
                     .font(.system(size: 19, weight: .medium))
@@ -337,7 +355,7 @@ struct TaskComposerView: View {
             if mode == .completed {
                 HStack {
                     Label("完成时间", systemImage: "checkmark.circle")
-                        .font(.subheadline)
+                        .font(AppTypography.callout)
                     Spacer()
                     DatePicker("完成时间", selection: $completedAt, displayedComponents: [.date, .hourAndMinute])
                         .labelsHidden()
@@ -348,49 +366,210 @@ struct TaskComposerView: View {
             } else {
                 VStack(alignment: .leading, spacing: 9) {
                     Text("安排到")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                                    weight: .semibold, design: preferences.fontStyle.design))
                         .foregroundStyle(.secondary)
-                    Picker("安排到", selection: $planChoice) {
-                        ForEach(TaskPlanChoice.allCases) { choice in Text(choice.rawValue).tag(choice) }
+                    HStack(spacing: AppSpacing.x2) {
+                        ForEach([TaskPlanChoice.today, .tomorrow, .custom]) { choice in
+                            Button {
+                                planChoice = choice
+                            } label: {
+                                Text(choice.rawValue)
+                                    .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                                              weight: planChoice == choice ? .semibold : .regular,
+                                                              design: preferences.fontStyle.design))
+                                    .foregroundStyle(planChoice == choice ? preferences.accentColor : AppColors.textSecondary)
+                                    .frame(maxWidth: .infinity, minHeight: 36)
+                                    .background(planChoice == choice ? preferences.accentColor.opacity(0.14) : preferences.cardBackground,
+                                                in: RoundedRectangle(cornerRadius: AppRadius.small))
+                                    .contentShape(RoundedRectangle(cornerRadius: AppRadius.small))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(planChoice == choice ? .isSelected : [])
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    Button {
+                        planChoice = .inbox
+                    } label: {
+                        Label("暂不安排 · 放入收集箱", systemImage: planChoice == .inbox ? "checkmark.circle.fill" : "tray")
+                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(planChoice == .inbox ? preferences.accentColor : AppColors.textSecondary)
                     if planChoice == .custom {
-                        DatePicker("计划日期", selection: $customDate, displayedComponents: .date)
-                            .padding(.top, 3)
+                        planCalendar
                     }
                 }
             }
 
+            TaskNotesField(text: $notes)
+
             subtaskFields
 
-            DisclosureGroup(isExpanded: $showDetails) {
-                advancedFields
-                    .padding(.top, 13)
-            } label: {
-                Label("更多设置", systemImage: "slider.horizontal.3")
-                    .font(.subheadline.weight(.medium))
+            VStack(spacing: 0) {
+                Button {
+                    showDetails.toggle()
+                } label: {
+                    HStack(spacing: AppSpacing.x2) {
+                        Image(systemName: "chevron.right")
+                            .rotationEffect(.degrees(showDetails ? 90 : 0))
+                        Label("更多设置", systemImage: "slider.horizontal.3")
+                            .font(AppTypography.callout.weight(.medium))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(AppSpacing.x4)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("更多设置")
+                .accessibilityValue(showDetails ? "已展开" : "已收起")
+
+                if showDetails {
+                    advancedFields
+                        .padding(.horizontal, AppSpacing.x4)
+                        .padding(.bottom, AppSpacing.x4)
+                }
             }
-            .padding(15)
-            .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: 13))
+            .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
 
             if let feedback {
                 Label(feedback, systemImage: "checkmark.circle.fill")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(preferences.accentColor)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
 
+    private var planCalendar: some View {
+        let calendar = Calendar.current
+        let monthStart = calendar.dateInterval(of: .month, for: displayedPlanMonth ?? customDate)?.start
+            ?? calendar.startOfDay(for: customDate)
+
+        return VStack(alignment: .leading, spacing: AppSpacing.x3) {
+            planCalendarTitle
+            planCalendarNavigation(monthStart: monthStart)
+            planCalendarGrid(monthStart: monthStart)
+        }
+        .padding(AppSpacing.x4)
+        .background(preferences.cardBackground, in: RoundedRectangle(cornerRadius: AppRadius.control))
+        .id("plan-calendar")
+    }
+
+    private var planCalendarTitle: some View {
+        HStack(spacing: AppSpacing.x2) {
+            Label("计划日期", systemImage: "calendar")
+                .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                            weight: .semibold, design: preferences.fontStyle.design))
+            Spacer(minLength: AppSpacing.x2)
+            Text(customDate.formatted(date: .long, time: .omitted))
+                .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                            design: preferences.fontStyle.design))
+                .foregroundStyle(AppColors.textSecondary)
+        }
+    }
+
+    private func planCalendarNavigation(monthStart: Date) -> some View {
+        HStack(spacing: AppSpacing.x2) {
+            Text(monthStart.formatted(.dateTime.year().month(.wide)))
+                .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                            weight: .semibold, design: preferences.fontStyle.design))
+            Spacer(minLength: 0)
+            Button("回到本月") { displayedPlanMonth = .now }
+                .buttonStyle(.plain)
+                .font(AppTypography.desktop(.callout, scale: preferences.fontScale,
+                                            design: preferences.fontStyle.design))
+                .foregroundStyle(preferences.accentColor)
+            Button {
+                displayedPlanMonth = Calendar.current.date(byAdding: .month, value: -1, to: monthStart)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("上个月")
+            Button {
+                displayedPlanMonth = Calendar.current.date(byAdding: .month, value: 1, to: monthStart)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("下个月")
+        }
+    }
+
+    private func planCalendarGrid(monthStart: Date) -> some View {
+        let calendar = Calendar.current
+        let leadingDays = (calendar.component(.weekday, from: monthStart) - calendar.firstWeekday + 7) % 7
+        let dayCount = calendar.range(of: .day, in: .month, for: monthStart)?.count ?? 30
+        let columns = Array(repeating: GridItem(.flexible(), spacing: AppSpacing.x1), count: 7)
+
+        return LazyVGrid(columns: columns, spacing: AppSpacing.x1) {
+            ForEach(0..<7) { index in
+                planCalendarWeekday(index, calendar: calendar)
+            }
+            ForEach(0..<(leadingDays + dayCount), id: \.self) { index in
+                if index < leadingDays {
+                    Color.clear.frame(height: 40)
+                } else if let date = calendar.date(byAdding: .day, value: index - leadingDays, to: monthStart) {
+                    planCalendarDay(date)
+                }
+            }
+        }
+    }
+
+    private func planCalendarWeekday(_ index: Int, calendar: Calendar) -> some View {
+        let weekday = (calendar.firstWeekday - 1 + index) % 7
+        return Text(calendar.veryShortStandaloneWeekdaySymbols[weekday])
+            .font(AppTypography.desktop(.caption1, scale: preferences.fontScale,
+                                        design: preferences.fontStyle.design))
+            .foregroundStyle(AppColors.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .accessibilityHidden(true)
+    }
+
+    private func planCalendarDay(_ date: Date) -> some View {
+        let calendar = Calendar.current
+        let isSelected = calendar.isDate(date, inSameDayAs: customDate)
+        let isToday = calendar.isDateInToday(date)
+
+        return Button {
+            let time = calendar.dateComponents([.hour, .minute, .second], from: customDate)
+            customDate = calendar.date(bySettingHour: time.hour ?? 0,
+                                       minute: time.minute ?? 0,
+                                       second: time.second ?? 0, of: date) ?? date
+            displayedPlanMonth = nil
+        } label: {
+            Text("\(calendar.component(.day, from: date))")
+                .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                            weight: isSelected ? .semibold : .regular,
+                                            design: preferences.fontStyle.design))
+                .foregroundStyle(isSelected ? preferences.accentColor : AppColors.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(isSelected ? preferences.accentColor.opacity(0.14) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: AppRadius.small))
+                .overlay(RoundedRectangle(cornerRadius: AppRadius.small)
+                    .strokeBorder(isToday ? preferences.accentColor.opacity(0.6) : .clear))
+                .contentShape(RoundedRectangle(cornerRadius: AppRadius.small))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel((isToday ? "今天，" : "") + date.formatted(date: .long, time: .omitted))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
     private var subtaskFields: some View {
         VStack(alignment: .leading, spacing: AppSpacing.x2) {
             HStack {
                 Label("子任务", systemImage: "arrow.turn.down.right")
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppTypography.callout.weight(.semibold))
                 Spacer()
                 Text("回车连续添加")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(.secondary)
             }
             ForEach($subtasks) { $draft in
@@ -433,8 +612,8 @@ struct TaskComposerView: View {
                 .frame(minHeight: 36)
             }
             if !cleanSubtasks.isEmpty {
-                Text("将创建 1 项主任务 + \(cleanSubtasks.count) 项子任务，保存后查看任务蓝图。")
-                    .font(.caption)
+                Text("将创建 1 项主任务 + \(cleanSubtasks.count) 项子任务，保存后可选择查看蓝图。")
+                    .font(AppTypography.caption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -444,13 +623,18 @@ struct TaskComposerView: View {
 
     private var advancedFields: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Picker("关联已有蓝图", selection: $blueprintID) {
-                Text("不关联").tag(nil as UUID?)
+            Picker("所属项目", selection: $blueprintID) {
+                Text("无项目").tag(nil as UUID?)
                 ForEach(activeBlueprints) { blueprint in
                     Text(blueprint.name).tag(blueprint.id as UUID?)
                 }
             }
-            TextField("所属项目（日报按项目归类）", text: $project)
+            if !project.isEmpty && blueprintID == nil {
+                Text("历史项目名称：\(project)。可在上方选择已有项目。")
+                    .font(AppTypography.desktop(.footnote, scale: preferences.fontScale,
+                                                design: preferences.fontStyle.design))
+                    .foregroundStyle(AppColors.textSecondary)
+            }
             if let blueprintID, !store.stages(for: blueprintID).isEmpty {
                 Picker("所属阶段", selection: $stageID) {
                     Text("不指定").tag(nil as UUID?)
@@ -496,25 +680,28 @@ struct TaskComposerView: View {
                     DatePicker("截止时间", selection: $dueDate, displayedComponents: [.date, .hourAndMinute])
                 }
                 if planChoice != .inbox {
-                    Toggle("锁定计划日期", isOn: $isPlanLocked)
+                    Toggle("固定安排", isOn: $isPlanLocked)
+                        .help("批量调整与 AI 重新规划会跳过此事项；手动改期需先关闭固定安排。")
                 }
             }
-            TextField("备注（可选）", text: $notes, axis: .vertical)
-                .lineLimit(2...4)
         }
-        .font(.subheadline)
+        .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                    design: preferences.fontStyle.design))
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             if keepOpen, navigationTaskID != nil {
-                Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") { close() }
+                Button("查看蓝图", systemImage: "point.3.connected.trianglepath.dotted") {
+                    shouldNavigateAfterClose = true
+                    close()
+                }
                     .buttonStyle(.link)
             }
             if !isAIInput {
                 Toggle("连续添加", isOn: $keepOpen)
                     .toggleStyle(.checkbox)
-                    .font(.caption)
+                    .font(AppTypography.caption)
             }
             Spacer()
             Button("取消") { cancel() }
@@ -525,6 +712,10 @@ struct TaskComposerView: View {
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.return, modifiers: [.command])
             .disabled(isAIInput ? !hasAIInput || store.isAIParsing : cleanTitle.isEmpty)
+            if !isAIInput && mode == .task && !cleanSubtasks.isEmpty && !keepOpen {
+                Button("添加并打开蓝图") { save(openBlueprint: true) }
+                    .disabled(cleanTitle.isEmpty)
+            }
         }
         .padding(.horizontal, 25)
         .padding(.vertical, 17)
@@ -535,7 +726,7 @@ struct TaskComposerView: View {
     private var primaryTitle: String {
         if isAIInput { return "生成草稿" }
         if mode == .completed { return "记录完成" }
-        return cleanSubtasks.isEmpty || keepOpen ? "添加任务" : "添加并查看蓝图"
+        return "添加任务"
     }
 
     private var primaryIcon: String {
@@ -571,10 +762,8 @@ struct TaskComposerView: View {
             reportCategory = parsed.task.effectiveReportCategory
             estimatedMinutes = parsed.task.estimatedMinutes
             project = parsed.task.project ?? ""
-            if let match = store.blueprints.first(where: { $0.name.localizedCaseInsensitiveCompare(project) == .orderedSame }) {
-                blueprintID = match.id
-            }
             customDate = parsed.task.scheduledFor
+            displayedPlanMonth = nil
             planChoice = Calendar.current.isDateInToday(customDate) ? .today : Calendar.current.isDateInTomorrow(customDate) ? .tomorrow : .custom
             hasDeadline = parsed.task.dueDate != nil
             dueDate = parsed.task.dueDate ?? customDate
@@ -587,7 +776,7 @@ struct TaskComposerView: View {
         focusInput()
     }
 
-    private func save() {
+    private func save(openBlueprint: Bool = false) {
         guard !isClosing, !cleanTitle.isEmpty else { return }
         let normalizedProject = project.trimmingCharacters(in: .whitespacesAndNewlines)
         let isCompleted = mode == .completed
@@ -646,9 +835,11 @@ struct TaskComposerView: View {
         if !children.isEmpty {
             navigationTaskID = parentID
             navigationBlueprintID = blueprintID
+            shouldNavigateAfterClose = openBlueprint
         } else {
             navigationTaskID = nil
             navigationBlueprintID = nil
+            shouldNavigateAfterClose = false
         }
         if keepOpen {
             withAnimation(motion) {
@@ -681,7 +872,7 @@ struct TaskComposerView: View {
     private func cancel() {
         guard !isClosing else { return }
         if cleanTitle.isEmpty && cleanSubtasks.isEmpty && cleanSentence.isEmpty && selectedImageData == nil && notes.isEmpty {
-            if keepOpen { navigationTaskID = nil }
+            shouldNavigateAfterClose = false
             close()
         } else {
             showDiscardConfirmation = true

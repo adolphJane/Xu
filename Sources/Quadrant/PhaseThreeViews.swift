@@ -22,7 +22,7 @@ struct CommandPaletteView: View {
                     .textFieldStyle(.plain)
                     .font(.title3)
                     .focused($queryFocused)
-                Text("⌘⇧Space").font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text("⌘⇧Space").font(AppTypography.caption.monospaced()).foregroundStyle(.secondary)
             }
             .padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             ScrollView {
@@ -65,7 +65,7 @@ struct AIBlueprintCreatorView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AI 生成完整蓝图").font(.title2.weight(.bold))
                     Text("AI 只生成草稿；检查并确认后才写入。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer(); Button("关闭") { dismiss() }
             }.padding(22)
@@ -88,7 +88,7 @@ struct AIBlueprintCreatorView: View {
             }
             GroupBox("发送给 DeepSeek 的信息") {
                 Text("目标描述、截止日期和每日可用时间。本功能不会发送已有任务、项目名称或备注。")
-                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(4)
+                    .font(AppTypography.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(4)
             }
             if let error = store.aiTaskError { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
             Spacer()
@@ -112,7 +112,7 @@ struct AIBlueprintCreatorView: View {
                         DatePicker("截止", selection: binding(\.dueDate), displayedComponents: .date)
                     }
                     Label("创建后，同一阶段的任务可并行；下一阶段会等待上一阶段所有任务完成。你可以在工作流画布中调整连线。", systemImage: "arrow.triangle.branch")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                     ForEach(draft?.stages ?? []) { stage in
                         VStack(alignment: .leading, spacing: 9) {
                             TextField("阶段名称", text: stageBinding(stage.id, \.name)).font(.headline)
@@ -120,7 +120,7 @@ struct AIBlueprintCreatorView: View {
                             HStack {
                                 DatePicker("开始", selection: stageBinding(stage.id, \.startDate), displayedComponents: .date)
                                 DatePicker("结束", selection: stageBinding(stage.id, \.dueDate), displayedComponents: .date)
-                            }.font(.caption)
+                            }.font(AppTypography.caption)
                             ForEach(stage.tasks) { task in
                                 HStack {
                                     Toggle("", isOn: taskBinding(stage.id, task.id, \.isIncluded)).labelsHidden()
@@ -187,7 +187,7 @@ struct AIReplanView: View {
                         Toggle("发送项目名称", isOn: $preferences.aiSendProject)
                         Toggle("发送任务备注", isOn: $preferences.aiSendNotes)
                         Text("始终发送：任务标题、日期、时长、状态、阻塞原因和目标截止日期。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
                     }.padding(4)
                 }
                 if let error = store.aiTaskError { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
@@ -204,7 +204,7 @@ struct AIReplanView: View {
                             VStack(alignment: .leading) {
                                 Text(task.title).font(.headline)
                                 Text("\(task.scheduledFor.formatted(date: .abbreviated, time: .omitted)) → \(change.newScheduledFor.formatted(date: .abbreviated, time: .omitted)) · \(change.reason)")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(AppTypography.caption).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -238,13 +238,13 @@ struct PlanChangeHistoryView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack { Text("AI 变更记录").font(.title2.weight(.bold)); Spacer(); Button("关闭") { dismiss() } }
             Text("撤销会恢复该次操作前的计划快照。建议只撤销最近一次尚未撤销的 AI 操作。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AppTypography.caption).foregroundStyle(.secondary)
             List(store.planChanges) { item in
                 HStack {
                     Image(systemName: item.kind == .aiBlueprint ? "point.3.connected.trianglepath.dotted" : "calendar.badge.clock")
                     VStack(alignment: .leading) {
                         Text(item.title)
-                        Text(item.createdAt.formatted()).font(.caption).foregroundStyle(.secondary)
+                        Text(item.createdAt.formatted()).font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button(item.isUndone ? "已撤销" : "撤销") {
@@ -269,7 +269,7 @@ struct SyncConflictView: View {
             Label("检测到同步冲突", systemImage: "arrow.triangle.branch").font(.title2.weight(.bold)).foregroundStyle(.orange)
             Text(conflict.message)
             Text("云端修订 \(conflict.remote.revision)，来自 \(conflict.remote.deviceID)，更新时间 \(conflict.remote.generatedAt.formatted())。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AppTypography.caption).foregroundStyle(.secondary)
             GroupBox {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("合并会保留两边独有的数据；同 ID 项目以本机版本为准。")
@@ -308,7 +308,7 @@ struct DataIntegrationSettingsView: View {
                 Button("立即同步", systemImage: "arrow.triangle.2.circlepath") { syncNow() }
                     .disabled(!preferences.syncEnabled || preferences.syncFolderPath.isEmpty)
                 Text("选择 iCloud Drive 中的文件夹即可跨 Mac 同步。冲突发生时必须人工选择，不会静默覆盖。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Section("系统日历") {
                 Toggle("允许读取和可选写入系统日历", isOn: $preferences.calendarIntegrationEnabled)
@@ -322,7 +322,7 @@ struct DataIntegrationSettingsView: View {
                     }
                 }.disabled(!preferences.calendarIntegrationEnabled)
                 Text("只有开启并单独授权后才会读取；写入操作仍需在具体任务菜单中主动执行。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Section("本地备份") {
                 HStack {
@@ -332,7 +332,7 @@ struct DataIntegrationSettingsView: View {
                     Button("恢复 JSON", role: .destructive) { chooseRestore() }
                 }
                 Text("JSON 包含全部业务数据；Markdown 适合阅读；CSV 适合表格处理。恢复前会校验并再次确认。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Section("自动更新") {
                 Toggle("启动时自动检查", isOn: $preferences.autoCheckUpdates)
@@ -342,7 +342,7 @@ struct DataIntegrationSettingsView: View {
                 if let status = preferences.updateStatus { Text(status).foregroundStyle(.secondary) }
                 if let update = preferences.availableUpdate, let url = URL(string: update.releaseURL) {
                     LabeledContent("可用版本", value: "\(update.version)\(update.isPrerelease ? "（预发布）" : "")")
-                    if !update.notes.isEmpty { Text(update.notes).font(.caption).textSelection(.enabled) }
+                    if !update.notes.isEmpty { Text(update.notes).font(AppTypography.caption).textSelection(.enabled) }
                     Link("查看 GitHub Release", destination: url)
                     Button(preferences.isInstallingUpdate ? "正在安装…" : "下载并安装更新") {
                         Task { await preferences.downloadAndInstallUpdate() }
@@ -350,12 +350,12 @@ struct DataIntegrationSettingsView: View {
                     .disabled(preferences.isInstallingUpdate || preferences.isCheckingUpdate)
                 }
                 Text("从项目 GitHub Releases 获取更新；下载后校验文件。当前目录不可写时会打开 DMG 供手动拖入“应用程序”。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Section("系统入口") {
                 LabeledContent("全局命令面板", value: "⌘⇧Space")
                 Text("菜单栏可打开紧凑桌面小组件；当前执行计时和纪念日倒计时会同步显示。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
         .appDialog(isPresented: $isConflictPresented) { if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) } }
@@ -411,7 +411,7 @@ struct CompactWidgetView: View {
             HStack { Text("序").font(.title2.weight(.bold)); Spacer(); Button { openWindow(id: "main") } label: { Image(systemName: "arrow.up.right.square") } }
             if let current {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(current.isInProgress ? "正在执行" : "下一项").font(.caption).foregroundStyle(.secondary)
+                    Text(current.isInProgress ? "正在执行" : "下一项").font(AppTypography.caption).foregroundStyle(.secondary)
                     Text(current.title).font(.headline).lineLimit(2)
                     if current.isInProgress, let start = current.startedAt {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -426,7 +426,7 @@ struct CompactWidgetView: View {
             } else { ContentUnavailableView("今日已清空", systemImage: "checkmark.circle") }
             if let anniversary = store.upcomingAnniversaries.first(where: { $0.showOnHome }), let days = anniversary.daysRemaining() {
                 HStack { Image(systemName: anniversary.type.icon).foregroundStyle(.pink); Text(anniversary.displayName); Spacer(); Text(days == 0 ? "今天" : "\(days) 天") }
-                    .font(.caption)
+                    .font(AppTypography.caption)
             }
         }.padding(18).frame(width: 330, height: 300).appSurface()
     }

@@ -194,7 +194,7 @@ struct PlanView: View {
             Button { showsTaskList.toggle() } label: {
                 Label("任务系列", systemImage: "sidebar.right")
             }.accessibilityLabel(showsTaskList ? "收起任务系列" : "显示任务系列")
-            AppButton(title: "安排事项", systemImage: "plus", tint: preferences.accentColor, action: onAddTask)
+            AppButton(title: "添加事项", systemImage: "plus", tint: preferences.accentColor, action: onAddTask)
         }
         .padding(.horizontal, AppSpacing.page).padding(.vertical, AppSpacing.x3)
     }
@@ -254,7 +254,6 @@ struct PlanView: View {
             HStack {
                 Text("任务系列").font(AppTypography.title)
                 Spacer()
-                Button(action: onAddTask) { Image(systemName: "plus") }.accessibilityLabel("添加事项")
             }.padding(AppSpacing.x4)
             Picker("任务筛选", selection: $showsUnscheduledOnly) {
                 Text("全部").tag(false)
@@ -280,6 +279,8 @@ struct PlanView: View {
                 if group.isSeries {
                     Button { if expanded { expandedIDs.remove(root.id) } else { expandedIDs.insert(root.id) } } label: {
                         Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityLabel(expanded ? "收起\(root.title)" : "展开\(root.title)")
                 }
                 Button { selectedSeriesID = selectedSeriesID == root.id ? nil : root.id } label: {

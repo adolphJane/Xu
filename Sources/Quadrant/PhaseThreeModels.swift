@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 struct WorkspaceSnapshot: Codable, Equatable {
-    var formatVersion = 1
+    var formatVersion = 2
     var generatedAt = Date.now
     var tasks: [TaskItem]
     var blueprints: [BlueprintItem]
@@ -14,7 +14,7 @@ struct WorkspaceSnapshot: Codable, Equatable {
     var categories: [String]? = nil
 
     var isValid: Bool {
-        formatVersion == 1
+        (formatVersion == 1 || formatVersion == 2)
             && Set(tasks.map(\.id)).count == tasks.count
             && Set(blueprints.map(\.id)).count == blueprints.count
             && Set(stages.map(\.id)).count == stages.count

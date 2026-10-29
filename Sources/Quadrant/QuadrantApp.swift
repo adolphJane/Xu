@@ -454,8 +454,19 @@ final class TaskStore: ObservableObject {
         }
     }
     @Published var categories: [String] = [] {
-        didSet { UserDefaults.standard.set(categories, forKey: "quadrant.taskCategories.v1") }
+        didSet {
+            if storesCategoryPreferences { UserDefaults.standard.set(categories, forKey: "quadrant.taskCategories.v1") }
+        }
     }
+    #if os(macOS)
+    @Published var categoryAppearance = CategoryAppearance() {
+        didSet {
+            if storesCategoryPreferences, let data = try? JSONEncoder().encode(categoryAppearance) {
+                UserDefaults.standard.set(data, forKey: CategoryAppearance.defaultsKey)
+            }
+        }
+    }
+    #endif
     @Published var blueprints: [BlueprintItem] = [] { didSet { persist { try persistence?.saveBlueprints(blueprints) } } }
     @Published var stages: [StageItem] = [] { didSet { persist { try persistence?.saveStages(stages) } } }
     @Published var milestones: [MilestoneItem] = [] { didSet { persist { try persistence?.saveMilestones(milestones) } } }
@@ -479,6 +490,7 @@ final class TaskStore: ObservableObject {
     private let storageKey = "quadrant.tasks.v1"
     private var persistence: PersistenceController?
     private var isApplyingSingleTaskMutation = false
+    private var storesCategoryPreferences = true
 
     private func persistTasks() {
         if let persistence {
@@ -502,7 +514,14 @@ final class TaskStore: ObservableObject {
     }
 
     init(inMemory: Bool = false) {
-        categories = UserDefaults.standard.stringArray(forKey: "quadrant.taskCategories.v1") ?? []
+        storesCategoryPreferences = !inMemory
+        categories = inMemory ? [] : UserDefaults.standard.stringArray(forKey: "quadrant.taskCategories.v1") ?? []
+        #if os(macOS)
+        if !inMemory, let data = UserDefaults.standard.data(forKey: CategoryAppearance.defaultsKey),
+           let saved = try? JSONDecoder().decode(CategoryAppearance.self, from: data) {
+            categoryAppearance = saved
+        }
+        #endif
         do {
             let persistence = try PersistenceController(inMemory: inMemory)
             let storedTasks = try persistence.loadTasks()
@@ -596,6 +615,9 @@ final class TaskStore: ObservableObject {
         guard !name.isEmpty, categories.contains(oldName),
               !categories.contains(where: { $0 != oldName && $0.localizedCaseInsensitiveCompare(name) == .orderedSame }) else { return false }
         categories = categories.map { $0 == oldName ? name : $0 }
+        #if os(macOS)
+        categoryAppearance.rename(oldName, to: name)
+        #endif
         tasks = tasks.map { task in
             var updated = task
             if updated.category == oldName { updated.category = name }
@@ -606,6 +628,9 @@ final class TaskStore: ObservableObject {
 
     func deleteCategory(_ name: String) {
         categories.removeAll { $0 == name }
+        #if os(macOS)
+        categoryAppearance.remove(name)
+        #endif
         tasks = tasks.map { task in
             var updated = task
             if updated.category == name { updated.category = nil }
@@ -1004,6 +1029,10 @@ final class TaskStore: ObservableObject {
 
     func postpone(_ task: TaskItem, to date: Date? = nil) {
         guard let current = tasks.first(where: { $0.id == task.id }), !current.isCompleted, !current.isCancelled else { return }
+        guard !current.planLocked else {
+            actionMessage = "此事项已固定安排。请先在事项详情中关闭“固定安排”，再修改日期。"
+            return
+        }
         mutate(task) {
             $0.originalScheduledFor = $0.originalScheduledFor ?? $0.scheduledFor
             let calendar = Calendar.current
@@ -1127,6 +1156,11 @@ final class TaskStore: ObservableObject {
     }
 
     func scheduleToday(_ task: TaskItem) {
+        guard let current = tasks.first(where: { $0.id == task.id }) else { return }
+        guard !current.planLocked else {
+            actionMessage = "此事项已固定安排。请先在事项详情中关闭“固定安排”，再修改日期。"
+            return
+        }
         mutate(task) {
             $0.scheduledFor = .now
             if $0.isUnscheduled { $0.status = .pending }
@@ -1506,6 +1540,11 @@ final class TaskStore: ObservableObject {
         weeklyReviews.insert(WeeklyReviewItem(weekStart: weekStart, summary: summary, nextWeekFocus: nextWeekFocus), at: 0)
     }
 
+    func saveReview(period: ReviewPeriod, interval: DateInterval, summary: String, nextFocus: String) {
+        weeklyReviews.insert(WeeklyReviewItem(weekStart: interval.start, summary: summary,
+                                              nextWeekFocus: nextFocus, period: period), at: 0)
+    }
+
     func toggleMilestone(_ milestone: MilestoneItem) {
         guard let index = milestones.firstIndex(where: { $0.id == milestone.id }) else { return }
         milestones[index].isCompleted.toggle()
@@ -1536,8 +1575,20 @@ final class TaskStore: ObservableObject {
         return min(1, max(0, date.timeIntervalSince(blueprint.startDate) / total))
     }
 
-    func saveReport(content: String, supplement: String, minimumLength: Int, maximumLength: Int) {
-        reports.insert(DailyReportItem(minimumLength: minimumLength, maximumLength: maximumLength, supplement: supplement, content: content), at: 0)
+    @discardableResult
+    func saveReport(content: String, supplement: String, minimumLength: Int, maximumLength: Int,
+                    updating reportID: UUID? = nil) -> UUID {
+        if let reportID, let index = reports.firstIndex(where: { $0.id == reportID }) {
+            reports[index].content = content
+            reports[index].supplement = supplement
+            reports[index].minimumLength = minimumLength
+            reports[index].maximumLength = maximumLength
+            return reportID
+        }
+        let item = DailyReportItem(minimumLength: minimumLength, maximumLength: maximumLength,
+                                   supplement: supplement, content: content)
+        reports.insert(item, at: 0)
+        return item.id
     }
 
     func parseTask(
@@ -1599,6 +1650,16 @@ final class TaskStore: ObservableObject {
     }
 
     func generateReport(endpoint: String, model: String, supplement: String, minimumLength: Int, maximumLength: Int) async -> String? {
+        let source = ReportSourceBuilder.candidates(today: todayTasks, completed: completedToday, processed: processedToday)
+        return await generateReport(
+            endpoint: endpoint, model: model,
+            request: ReportRequest(tasks: source, template: .classic, supplement: supplement,
+                                   minimumLength: minimumLength, maximumLength: maximumLength,
+                                   sendNotes: true, sendProject: true)
+        )
+    }
+
+    func generateReport(endpoint: String, model: String, request: ReportRequest) async -> String? {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             reportError = "请先在设置中填写 DeepSeek API Key。"
             return nil
@@ -1608,31 +1669,30 @@ final class TaskStore: ObservableObject {
         reportLengthWarning = nil
         defer { isReportLoading = false }
 
-        var reportTasks = todayTasks
-        for task in completedToday where !reportTasks.contains(where: { $0.id == task.id }) {
-            reportTasks.append(task)
-        }
-        for task in processedToday where !reportTasks.contains(where: { $0.id == task.id }) {
-            reportTasks.append(task)
-        }
-        reportTasks = ReportTaskGrouping.usingBlueprintNames(reportTasks, blueprints: blueprints)
-        let prompt = DailyReportPrompt.make(tasks: reportTasks, completed: completedToday, supplement: supplement, minimumLength: minimumLength, maximumLength: maximumLength)
+        let reportTasks = ReportSourceBuilder.preparedTasks(for: request, blueprints: blueprints)
+        let completed = reportTasks.filter(\.isCompleted)
+        let prompt = DailyReportPrompt.make(tasks: reportTasks, completed: completed,
+                                            supplement: request.supplement,
+                                            minimumLength: request.minimumLength,
+                                            maximumLength: request.maximumLength,
+                                            template: request.template)
         do {
             var result = try await DeepSeekService.generateReport(apiKey: apiKey, endpoint: endpoint, model: model, prompt: prompt)
-            if result.count < minimumLength || result.count > maximumLength {
-                let direction = result.count < minimumLength ? "补充" : "压缩"
+            if result.count < request.minimumLength || result.count > request.maximumLength {
+                let direction = result.count < request.minimumLength ? "补充" : "压缩"
                 let revisionPrompt = """
-                请将下面日报\(direction)到 \(minimumLength)～\(maximumLength) 字，并严格保留原有三个一级编号和项目归类，不得编造事实。只返回修改后的日报。\n\n\(result)
+                请将下面日报\(direction)到 \(request.minimumLength)～\(request.maximumLength) 字，保留“\(request.template.rawValue)”模板的章节和分组，不得编造事实。只返回修改后的日报。\n\n\(result)
                 """
                 result = try await DeepSeekService.generateReport(apiKey: apiKey, endpoint: endpoint, model: model, prompt: revisionPrompt)
             }
             let finalResult = DailyReportPrompt.enforceMinimumLength(
                 result,
-                fallback: DailyReportPrompt.fallback(tasks: reportTasks, completed: completedToday, supplement: supplement),
-                minimumLength: minimumLength
+                fallback: DailyReportPrompt.fallback(tasks: reportTasks, completed: completed,
+                                                     supplement: request.supplement, template: request.template),
+                minimumLength: request.minimumLength
             )
-            if finalResult.count > maximumLength {
-                reportLengthWarning = "生成内容为 \(finalResult.count) 字，超过设定上限 \(maximumLength) 字，请编辑或重新生成。"
+            if finalResult.count > request.maximumLength {
+                reportLengthWarning = "生成内容为 \(finalResult.count) 字，超过设定上限 \(request.maximumLength) 字，请编辑或重新生成。"
             }
             return finalResult
         } catch {
@@ -1643,14 +1703,65 @@ final class TaskStore: ObservableObject {
 
 }
 
+enum ReportTemplatePreset: String, CaseIterable, Identifiable {
+    case classic = "工作进展"
+    case byCategory = "按分类汇总"
+    case personal = "个人回顾"
+
+    var id: String { rawValue }
+    var groupingTitle: String { self == .byCategory ? "分类" : "项目" }
+}
+
+struct ReportRequest {
+    let tasks: [TaskItem]
+    let template: ReportTemplatePreset
+    let supplement: String
+    let minimumLength: Int
+    let maximumLength: Int
+    let sendNotes: Bool
+    let sendProject: Bool
+}
+
+enum ReportSourceBuilder {
+    static func candidates(today: [TaskItem], completed: [TaskItem], processed: [TaskItem]) -> [TaskItem] {
+        var seen = Set<UUID>()
+        return (today + completed + processed).filter { seen.insert($0.id).inserted }
+    }
+
+    static func preparedTasks(for request: ReportRequest, blueprints: [BlueprintItem]) -> [TaskItem] {
+        let named = request.sendProject
+            ? ReportTaskGrouping.usingBlueprintNames(request.tasks, blueprints: blueprints)
+            : request.tasks
+        return named.map { task in
+            var copy = task
+            if !request.sendNotes { copy.notes = ""; copy.blockReason = nil }
+            if !request.sendProject { copy.project = nil }
+            return copy
+        }
+    }
+}
+
 enum DailyReportPrompt {
-    static func make(tasks: [TaskItem], completed: [TaskItem], supplement: String, minimumLength: Int, maximumLength: Int) -> String {
+    static func make(tasks: [TaskItem], completed: [TaskItem], supplement: String, minimumLength: Int, maximumLength: Int,
+                     template: ReportTemplatePreset = .classic) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年MM月dd日"
-        let projectProgress = groupedItems(tasks.filter { $0.effectiveReportCategory == .projectProgress })
-        let collaboration = groupedItems(tasks.filter { $0.effectiveReportCategory == .collaboration })
-        let tomorrowFocus = groupedItems(tasks.filter { $0.needsAction })
+        let projectProgress = groupedItems(tasks.filter { $0.effectiveReportCategory == .projectProgress }, template: template)
+        let collaboration = groupedItems(tasks.filter { $0.effectiveReportCategory == .collaboration }, template: template)
+        let tomorrowFocus = groupedItems(tasks.filter { $0.needsAction }, template: template)
         let supplementText = supplement.trimmingCharacters(in: .whitespacesAndNewlines)
+        if template != .classic {
+            let all = groupedItems(tasks, template: template)
+            let section = template == .byCategory ? "今日分类进展" : "今日行动与感受"
+            return """
+            根据以下真实事项和补充信息，使用“\(template.rawValue)”模板生成 \(minimumLength)～\(maximumLength) 字的中文 Markdown 日报。不得编造完成、安排或结论。
+            只使用三个一级标题：1. \(section)；2. 需要关注；3. 后续重点。\(template == .byCategory ? "第一部分按分类汇总，未分类单列。" : "第一部分以个人回顾口吻描述实际行动。")第三部分的未完成事项只是建议，不得写成已安排到明天。
+            日期：\(formatter.string(from: .now))
+            今日事项：\(all.isEmpty ? "无" : all)
+            未完成事项：\(tomorrowFocus.isEmpty ? "无" : tomorrowFocus)
+            补充：\(supplementText.isEmpty ? "无" : supplementText)
+            """
+        }
         return """
         请基于以下任务数据，用务实、清晰的中文生成一份 Markdown 日报。不要编造不存在的事实。
 
@@ -1681,13 +1792,26 @@ enum DailyReportPrompt {
         """
     }
 
-    static func fallback(tasks: [TaskItem], completed: [TaskItem], supplement: String) -> String {
+    static func fallback(tasks: [TaskItem], completed: [TaskItem], supplement: String,
+                         template: ReportTemplatePreset = .classic) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy年MM月dd日"
-        let progress = groupedItems(tasks.filter { $0.effectiveReportCategory == .projectProgress })
-        let collaboration = groupedItems(tasks.filter { $0.effectiveReportCategory == .collaboration })
-        let focus = groupedItems(tasks.filter { $0.needsAction })
+        let progress = groupedItems(tasks.filter { $0.effectiveReportCategory == .projectProgress }, template: template)
+        let collaboration = groupedItems(tasks.filter { $0.effectiveReportCategory == .collaboration }, template: template)
+        let focus = groupedItems(tasks.filter { $0.needsAction }, template: template)
         let context = supplement.trimmingCharacters(in: .whitespacesAndNewlines)
+        if template != .classic {
+            let section = template == .byCategory ? "今日分类进展" : "今日行动与感受"
+            return """
+            \(formatter.string(from: .now)) 日报
+            1. \(section)
+            \(groupedItems(tasks, template: template).isEmpty ? "- 今日暂无事项记录。" : groupedItems(tasks, template: template))
+            2. 需要关注
+            - \(context.isEmpty ? "根据实际工作补充风险和结论。" : context)
+            3. 后续重点
+            \(focus.isEmpty ? "- 下一步待确认。" : focus)
+            """
+        }
         return """
         \(formatter.string(from: .now)) 日报
 
@@ -1714,11 +1838,13 @@ enum DailyReportPrompt {
         return output
     }
 
-    private static func groupedItems(_ tasks: [TaskItem]) -> String {
-        Dictionary(grouping: tasks, by: \.projectName)
+    private static func groupedItems(_ tasks: [TaskItem], template: ReportTemplatePreset) -> String {
+        let key: (TaskItem) -> String = template == .byCategory ? { $0.categoryName } : { $0.projectName }
+        let groups = Dictionary(grouping: tasks, by: key)
+        return groups
             .keys.sorted()
             .map { project in
-                let entries = Dictionary(grouping: tasks, by: \.projectName)[project] ?? []
+                let entries = groups[project] ?? []
                 let lines = entries.map { task in
                     let status = task.effectiveStatus.title
                     let note = task.notes.trimmingCharacters(in: .whitespacesAndNewlines)

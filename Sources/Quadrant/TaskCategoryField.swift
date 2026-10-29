@@ -4,7 +4,6 @@ struct TaskCategoryField: View {
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
     @Binding var category: String
-    var allowsCustomInput = true
     @State private var isPickerPresented = false
 
     private var selectedCategory: String {
@@ -25,16 +24,12 @@ struct TaskCategoryField: View {
                 .foregroundStyle(AppColors.textSecondary)
             Spacer(minLength: AppSpacing.x2)
             HStack(spacing: AppSpacing.x2) {
-                if allowsCustomInput {
-                    TextField("输入新类别", text: $category)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("类别，可输入新类别")
-                        .frame(minWidth: 100, maxWidth: 170)
-                }
                 Button {
                     isPickerPresented = true
                 } label: {
                     HStack(spacing: AppSpacing.x3) {
+                        Image(systemName: store.categoryAppearance.symbol(for: selectedCategory))
+                            .foregroundStyle(preferences.accentColor).accessibilityHidden(true)
                         Text(selectedCategory.isEmpty ? "未分类" : selectedCategory)
                             .font(AppTypography.callout.weight(.medium))
                             .foregroundStyle(selectedCategory.isEmpty ? AppColors.textSecondary : AppColors.textPrimary)
@@ -56,7 +51,7 @@ struct TaskCategoryField: View {
                     .contentShape(RoundedRectangle(cornerRadius: AppRadius.small))
                 }
                 .buttonStyle(.plain)
-                .frame(width: allowsCustomInput ? 130 : 220)
+                .frame(width: 220)
                 .help(selectedCategory.isEmpty ? "选择类别" : selectedCategory)
                 .accessibilityLabel("选择类别")
                 .accessibilityValue(selectedCategory.isEmpty ? "未分类" : selectedCategory)
@@ -64,6 +59,7 @@ struct TaskCategoryField: View {
                     TaskCategoryOptions(
                         categories: availableCategories, selection: selectedCategory,
                         tint: preferences.accentColor, surface: preferences.cardBackground,
+                        symbols: store.categoryAppearance.symbols,
                         onSelect: { category = $0; isPickerPresented = false },
                         onClose: { isPickerPresented = false }
                     )
@@ -79,6 +75,7 @@ struct TaskCategoryOptions: View {
     let selection: String
     var tint: Color = AppColors.brand
     var surface: Color = AppColors.surface
+    var symbols: [String: String] = [:]
     let onSelect: (String) -> Void
     let onClose: () -> Void
     @State private var hoveredCategory: String?
@@ -147,7 +144,7 @@ struct TaskCategoryOptions: View {
         let isHovered = hoveredCategory == name
         return Button { onSelect(name) } label: {
             HStack(spacing: AppSpacing.x3) {
-                Image(systemName: name.isEmpty ? "tray" : "tag")
+                Image(systemName: name.isEmpty ? "tray" : CategorySymbol.validated(symbols[CategoryAppearance.key(name)] ?? "tag"))
                     .font(AppTypography.callout)
                     .foregroundStyle(isSelected ? tint : AppColors.textSecondary)
                     .frame(width: AppSpacing.x8, height: AppSpacing.x8)

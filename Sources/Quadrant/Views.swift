@@ -46,8 +46,10 @@ struct ContentView: View {
     @State private var selectedTask: TaskItem?
     @State private var editorBlueprintDestination: TaskItem?
     @State private var taskBlueprintRoute: TaskBlueprintRoute?
+    @State private var projectBlueprintID: UUID?
     @State private var showsBlueprintLibrary = false
     @State private var isReportPresented = false
+    @State private var isInboxComposerPresented = false
     @State private var isCommandPalettePresented = false
     @State private var isAIBlueprintPresented = false
     @State private var isSyncConflictPresented = false
@@ -62,13 +64,30 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
                 WorkbenchTopBar(
-                    section: selection ?? .today,
+                    section: taskBlueprintRoute != nil || projectBlueprintID != nil ? .blueprints : selection ?? .today,
                     isCommandPalettePresented: $isCommandPalettePresented,
                     performCommand: performCommand
                 )
                 Group {
+                    if let route = taskBlueprintRoute {
+                        if let blueprintID = route.blueprintID,
+                           store.blueprints.contains(where: { $0.id == blueprintID }) {
+                            BlueprintDetailView(blueprintID: blueprintID, focusTaskID: route.taskID,
+                                                onClose: { taskBlueprintRoute = nil })
+                        } else {
+                            TaskBlueprintView(
+                                rootTaskID: TaskTreeProjection.rootID(containing: route.taskID, in: store.tasks),
+                                focusTaskID: route.taskID,
+                                onClose: { taskBlueprintRoute = nil }
+                            )
+                        }
+                    } else if let projectBlueprintID {
+                        BlueprintDetailView(blueprintID: projectBlueprintID,
+                                            onClose: { self.projectBlueprintID = nil })
+                    } else {
                     switch selection ?? .today {
-                    case .inbox: InboxView(onSelect: { selectedTask = $0 })
+                    case .inbox: InboxView(onSelect: { selectedTask = $0 },
+                                           onAddTask: { isInboxComposerPresented = true })
                     case .today: TodayWorkbenchView(
                         onSelect: { selectedTask = $0 },
                         onReport: { isReportPresented = true },
@@ -86,6 +105,7 @@ struct ContentView: View {
                     case .anniversaries: AnniversariesView()
                     case .completed: CompletedView(onSelect: { selectedTask = $0 })
                     case .report: ReportLanding(onGenerate: { isReportPresented = true })
+                    }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,18 +126,8 @@ struct ContentView: View {
         }) { task in
             TaskEditor(task: task, onRequestBlueprint: { editorBlueprintDestination = $0 })
         }
-        .appDialog(item: $taskBlueprintRoute) { route in
-            if let blueprintID = route.blueprintID,
-               store.blueprints.contains(where: { $0.id == blueprintID }) {
-                BlueprintDetailView(blueprintID: blueprintID, focusTaskID: route.taskID)
-            } else {
-                TaskBlueprintView(
-                    rootTaskID: TaskTreeProjection.rootID(containing: route.taskID, in: store.tasks),
-                    focusTaskID: route.taskID
-                )
-            }
-        }
         .appDialog(isPresented: $isReportPresented) { DailyReportView() }
+        .appDialog(isPresented: $isInboxComposerPresented) { TaskComposerView(startsInInbox: true) }
         .appDialog(isPresented: $isAIBlueprintPresented) { AIBlueprintCreatorView() }
         .appDialog(isPresented: $isSyncConflictPresented) {
             if let conflict = store.syncConflict { SyncConflictView(conflict: conflict) }
@@ -145,11 +155,20 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .showTaskComposer)) { _ in composerPresentation.show(.task) }
         .onReceive(NotificationCenter.default.publisher(for: .showTaskBlueprint)) { notification in
             guard let taskID = notification.object as? UUID else { return }
-            selection = .tasks
+            projectBlueprintID = nil
             taskBlueprintRoute = TaskBlueprintRoute(
                 taskID: taskID,
                 blueprintID: notification.userInfo?["blueprintID"] as? UUID
             )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showBlueprint)) { notification in
+            guard let blueprintID = notification.object as? UUID else { return }
+            taskBlueprintRoute = nil
+            projectBlueprintID = blueprintID
+        }
+        .onChange(of: selection) { _, _ in
+            taskBlueprintRoute = nil
+            projectBlueprintID = nil
         }
         .onReceive(syncTimer) { _ in
             guard preferences.syncEnabled, !preferences.syncFolderPath.isEmpty, store.syncConflict == nil else { return }
@@ -205,7 +224,7 @@ struct SidebarView: View {
                     .background(preferences.accentColor.gradient, in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("序").font(.system(size: 16, weight: .semibold))
-                    Text("把计划变成行动").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("把计划变成行动").font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -248,7 +267,7 @@ struct SidebarView: View {
 
     private func sidebarCaption(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
+            .font(AppTypography.caption.weight(.semibold))
             .tracking(1.2)
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 10)
@@ -289,7 +308,7 @@ private struct SidebarTodayCount: View {
         Group {
             if !store.todayTasks.isEmpty {
                 Text("\(store.todayTasks.filter(\.needsAction).count)")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .font(AppTypography.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(isSelected ? preferences.accentColor : .secondary)
             }
         }
@@ -363,13 +382,13 @@ struct PageHeader: View {
         HStack(alignment: .bottom, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(eyebrow.uppercased())
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(AppTypography.callout.weight(.semibold))
                     .tracking(1.1)
                     .foregroundStyle(preferences.accentColor)
                 Text(title)
                     .font(.system(size: 29, weight: .bold, design: .rounded))
                     .tracking(-0.6)
-                Text(description).font(.subheadline).foregroundStyle(.secondary)
+                Text(description).font(AppTypography.callout).foregroundStyle(.secondary)
             }
             Spacer()
             if let action {
@@ -382,7 +401,6 @@ struct PageHeader: View {
 struct TodayView: View {
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var preferences: AppPreferences
-    @State private var selectedBlueprint: BlueprintItem?
     let onSelect: (TaskItem) -> Void
     let onReport: () -> Void
     let onAddTask: () -> Void
@@ -412,7 +430,7 @@ struct TodayView: View {
             VStack(alignment: .leading, spacing: 26) {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("TODAY").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("TODAY").font(AppTypography.caption.weight(.semibold)).foregroundStyle(.secondary)
                         Text("今天，做好最重要的事").font(.largeTitle.weight(.bold))
                         Text("已完成 \(store.completionText) 项 · 先完成重要且紧急的事项")
                             .foregroundStyle(.secondary)
@@ -436,11 +454,11 @@ struct TodayView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("按蓝图执行").font(.title2.weight(.bold))
                         Text("把今天的动作放回目标路径中，完成一项就推进一格。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text("预计 \(actionableTasks.reduce(0) { $0 + $1.estimatedMinutes }) 分钟")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                     Button("生成日报", systemImage: "sparkles", action: onReport)
                 }
                 if store.todayTasks.isEmpty {
@@ -451,7 +469,9 @@ struct TodayView: View {
                         TodayBlueprintSection(
                             group: group,
                             focusTasks: focusTasks,
-                            onOpenBlueprint: { selectedBlueprint = group.blueprint },
+                            onOpenBlueprint: {
+                                NotificationCenter.default.post(name: .showBlueprint, object: group.blueprint.id)
+                            },
                             onSelect: onSelect
                         )
                     }
@@ -473,7 +493,7 @@ struct TodayView: View {
                                 Image(systemName: item.type.icon).foregroundStyle(.pink)
                                 Text(item.displayName)
                                 Spacer()
-                                if let days = item.daysRemaining() { Text(days == 0 ? "今天" : "还有 \(days) 天").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
+                                if let days = item.daysRemaining() { Text(days == 0 ? "今天" : "还有 \(days) 天").font(AppTypography.caption.monospacedDigit()).foregroundStyle(.secondary) }
                             }
                             .padding(12).background(.background.opacity(0.78), in: RoundedRectangle(cornerRadius: 12))
                         }
@@ -485,7 +505,6 @@ struct TodayView: View {
             .padding(.horizontal, 34)
             .padding(.vertical, 30)
         }
-        .appDialog(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
     }
 }
 
@@ -515,11 +534,11 @@ struct TodayBlueprintSection: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(group.blueprint.name).font(.headline)
                     Text("今日 \(completedCount)/\(trackableCount) · 待投入 \(remainingMinutes) 分钟")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("蓝图总进度 \(Int(store.blueprintProgress(group.blueprint.id) * 100))%")
-                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .font(AppTypography.caption.monospacedDigit()).foregroundStyle(.secondary)
                 Button("查看蓝图", systemImage: "arrow.up.right", action: onOpenBlueprint)
                     .buttonStyle(.borderless)
             }
@@ -551,7 +570,7 @@ struct TodayTaskRow: View {
             Group {
                 if let focusRank {
                     Text("\(focusRank)")
-                        .font(.caption.monospacedDigit().weight(.bold))
+                        .font(AppTypography.caption.monospacedDigit().weight(.bold))
                         .foregroundStyle(.white)
                         .frame(width: 24, height: 24)
                         .background(Color.accentColor, in: Circle())
@@ -579,10 +598,10 @@ struct UnassignedTodaySection: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("暂未归入蓝图").font(.headline)
                     Text("这些事项能执行，但还没有连接到长期目标。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(tasks.count) 项").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text("\(tasks.count) 项").font(AppTypography.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             ForEach(tasks) { task in
                 HStack(spacing: 9) {
@@ -629,7 +648,7 @@ struct StatCard: View {
                 .background(color.opacity(0.11), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
                 Text(value).font(.title3.weight(.semibold)).contentTransition(.numericText())
-                Text(title).font(.caption).foregroundStyle(.secondary)
+                Text(title).font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -673,14 +692,14 @@ struct QuadrantPanel: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(quadrant.title).font(.headline)
-                    Text(quadrant.subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(quadrant.subtitle).font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(tasks.count)").font(.caption.weight(.bold)).foregroundStyle(preferences.color(for: quadrant))
+                Text("\(tasks.count)").font(AppTypography.caption.weight(.bold)).foregroundStyle(preferences.color(for: quadrant))
             }
             Divider()
             if tasks.isEmpty {
-                Text("暂无事项").font(.subheadline).foregroundStyle(.tertiary).frame(maxWidth: .infinity, minHeight: 52)
+                Text("暂无事项").font(AppTypography.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity, minHeight: 52)
             } else {
                 ForEach(tasks) { task in
                     TaskCard(task: task, compact: true, onSelect: onSelect)
@@ -761,12 +780,13 @@ private struct TaskListTreeRow: View {
                     else { collapsedRootIDs.insert(task.id) }
                 } label: {
                     Image(systemName: collapsedRootIDs.contains(task.id) ? "chevron.right" : "chevron.down")
-                        .frame(width: 26, height: 36)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(collapsedRootIDs.contains(task.id) ? "展开\(task.title)的子任务" : "收起\(task.title)的子任务")
             } else if depth > 0 {
-                Color.clear.frame(width: 26, height: 1)
+                Color.clear.frame(width: 36, height: 1)
             }
             TaskCard(task: task, onSelect: onSelect, onEditTask: onEditTask,
                      onAddChildTask: onAddChildTask, onShowBlueprint: onShowBlueprint,
@@ -831,8 +851,8 @@ struct TaskCard: View {
                 .accessibilityLabel(task.isCompleted ? "恢复\(task.title)" : "完成\(task.title)")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    if task.parentTaskID != nil && !embedded { Image(systemName: "arrow.turn.down.right").font(.caption).foregroundStyle(.tertiary) }
-                    if task.planLocked { Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
+                    if task.parentTaskID != nil && !embedded { Image(systemName: "arrow.turn.down.right").font(AppTypography.caption).foregroundStyle(.tertiary) }
+                    if task.planLocked { Image(systemName: "lock.fill").font(AppTypography.caption).foregroundStyle(.secondary).help("计划日期已锁定") }
                     Text(task.title).strikethrough(task.isCompleted || task.isCancelled).lineLimit(compact ? 1 : 2)
                         .foregroundStyle(task.isCompleted ? AppColors.textSecondary : AppColors.textPrimary)
                         .font(embedded ? AppTypography.desktop(.body, scale: preferences.fontScale,
@@ -842,7 +862,7 @@ struct TaskCard: View {
                     Text(clarifiesChildScope
                          ? "直接子任务 \(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 已完成"
                          : "\(childTasks.filter(\.isCompleted).count)/\(childTasks.count) 项子任务已完成")
-                        .font(.caption)
+                        .font(AppTypography.caption)
                         .foregroundStyle(.secondary)
                 }
                 if embedded {
@@ -881,14 +901,14 @@ struct TaskCard: View {
                             }
                         }
                     }
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
                     if task.effectiveStatus == .blocked, let reason = task.blockReason, !reason.isEmpty {
                         Label(reason, systemImage: "exclamationmark.octagon")
-                            .font(.caption).foregroundStyle(.red)
+                            .font(AppTypography.caption).foregroundStyle(.red)
                     }
                     if task.needsAction, let reason = store.executionBlockReason(for: task) {
                         Label(reason, systemImage: "lock")
-                            .font(.caption).foregroundStyle(.orange).lineLimit(1)
+                            .font(AppTypography.caption).foregroundStyle(.orange).lineLimit(1)
                     }
                 }
             }
@@ -1146,14 +1166,16 @@ struct BlockTaskEditor: View {
 struct InboxView: View {
     @EnvironmentObject private var store: TaskStore
     let onSelect: (TaskItem) -> Void
+    let onAddTask: () -> Void
     var tasks: [TaskItem] { store.tasks.filter(\.isUnscheduled).sorted { $0.createdAt > $1.createdAt } }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: AppSpacing.section) {
                 PageHeader(eyebrow: "CAPTURE", title: "收集箱", description: "快速记下，稍后再判断优先级")
                 if tasks.isEmpty {
-                    AppEmptyState(title: "收集箱已清空",
-                                  message: "新建事项时选择“暂不安排日期”，就可以先收集、稍后再规划。")
+                    AppEmptyState(title: "收集箱里还没有事项",
+                                  message: "新建事项时选择“暂不安排”，就可以先收集、稍后再规划。",
+                                  systemImage: "tray", actionTitle: "收集事项", action: onAddTask)
                         .frame(maxWidth: .infinity, minHeight: 240)
                 } else {
                     TaskList(tasks: tasks, onSelect: onSelect)
@@ -1168,7 +1190,7 @@ struct ReportLanding: View {
     @EnvironmentObject private var preferences: AppPreferences
     let onGenerate: () -> Void
     @State private var selectedReport: DailyReportItem?
-    @State private var isWeeklyReviewPresented = false
+    @State private var isReviewPresented = false
 
     var body: some View {
         ScrollView {
@@ -1176,16 +1198,22 @@ struct ReportLanding: View {
                 HStack(alignment: .bottom) {
                     PageHeader(eyebrow: "REPORTS", title: "日报与复盘", description: "记录计划执行、会议结论和明日重点。")
                     Spacer()
-                    Button("本周复盘", systemImage: "calendar.badge.checkmark") { isWeeklyReviewPresented = true }
-                    AppButton(title: "生成今日日报", systemImage: "sparkles", tint: preferences.accentColor,
-                              action: onGenerate)
+                    AppButton(title: "新建复盘", systemImage: "calendar.badge.checkmark",
+                              kind: .secondary, tint: preferences.accentColor) {
+                        isReviewPresented = true
+                    }
+                    if !store.reports.isEmpty {
+                        AppButton(title: "生成今日日报", systemImage: "sparkles", tint: preferences.accentColor,
+                                  action: onGenerate)
+                    }
                 }
                 if !store.weeklyReviews.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("周复盘").font(.title2.weight(.bold))
+                        Text("复盘记录").font(AppTypography.title)
                         ForEach(store.weeklyReviews.prefix(4)) { review in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(review.weekStart.formatted(.dateTime.year().month().day()) + " 当周").font(.headline)
+                                Text(review.weekStart.formatted(.dateTime.year().month().day()) + " · " + review.effectivePeriod.title + "复盘")
+                                    .font(AppTypography.headline)
                                 Text(review.summary).lineLimit(2)
                                 if !review.nextWeekFocus.isEmpty { Label(review.nextWeekFocus, systemImage: "arrow.right.circle").foregroundStyle(.secondary) }
                             }
@@ -1196,7 +1224,9 @@ struct ReportLanding: View {
                     }
                 }
                 if store.reports.isEmpty {
-                    ContentUnavailableView("还没有保存的日报", systemImage: "doc.text", description: Text("生成日报后点击“保存日报”，即可在这里回顾。"))
+                    AppEmptyState(title: "记录今天的进展", message: "生成并保存日报后，可以在这里回顾。",
+                                  systemImage: "doc.text", actionTitle: "生成今日日报",
+                                  tint: preferences.accentColor, action: onGenerate)
                         .frame(maxWidth: .infinity, minHeight: 360)
                 } else {
                     LazyVStack(spacing: 10) {
@@ -1209,7 +1239,7 @@ struct ReportLanding: View {
                                         Text(report.content.replacingOccurrences(of: "\n", with: " ")).lineLimit(2).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text("\(report.content.count) 字").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(report.content.count) 字").font(AppTypography.caption).foregroundStyle(.secondary)
                                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                                 }
                                 .padding(16)
@@ -1226,7 +1256,9 @@ struct ReportLanding: View {
             .padding(30)
         }
         .appDialog(item: $selectedReport) { ReportDetailView(report: $0) }
-        .appDialog(isPresented: $isWeeklyReviewPresented) { WeeklyReviewEditor() }
+        .appDialog(isPresented: $isReviewPresented) {
+            ReviewEditor()
+        }
     }
 }
 
@@ -1240,7 +1272,7 @@ struct ReportDetailView: View {
                 VStack(alignment: .leading) {
                     Text(report.reportDate.formatted(date: .long, time: .omitted)).font(.title2.weight(.bold))
                     Text("字数范围 \(report.minimumLength)～\(report.maximumLength) · 实际 \(report.content.count) 字")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer(); Button("关闭") { dismiss() }
             }
@@ -1279,7 +1311,7 @@ struct QuickCompletedEditor: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("补记已完成事项").font(.title2.weight(.bold))
                     Text("记录刚刚完成、但还没有加入计划的事项。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -1369,100 +1401,229 @@ struct DailyReportView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @State private var content = ""
     @State private var supplement = ""
+    @State private var template: ReportTemplatePreset = .classic
+    @State private var filtersCategories = false
+    @State private var selectedCategories: Set<String> = []
     @State private var lengthPreset: ReportLengthPreset = .short
     @State private var customMinimum = 125
     @State private var customMaximum = 180
-    @State private var isSaved = false
+    @State private var savedContent: String?
+    @State private var savedReportID: UUID?
+    @State private var lastGeneratedContent = ""
+    @State private var showReplaceConfirmation = false
+    @State private var showDiscardConfirmation = false
+    @State private var generationID = UUID()
+    @State private var generationTask: Task<Void, Never>?
+
+    private var candidateTasks: [TaskItem] {
+        ReportSourceBuilder.candidates(today: store.todayTasks, completed: store.completedToday,
+                                       processed: store.processedToday)
+    }
+    private var categoryKeys: [String] {
+        Array(Set(candidateTasks.map { $0.category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }))
+            .sorted { $0.isEmpty ? true : $1.isEmpty ? false : $0 < $1 }
+    }
+    private var sourceTasks: [TaskItem] {
+        filtersCategories ? candidateTasks.filter {
+            selectedCategories.contains($0.category?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        } : candidateTasks
+    }
+    private var canGenerate: Bool {
+        lengthIsValid && (!sourceTasks.isEmpty || !supplement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
 
     private var selectedMinimum: Int { lengthPreset == .custom ? customMinimum : lengthPreset.range.lowerBound }
     private var selectedMaximum: Int { lengthPreset == .custom ? customMaximum : lengthPreset.range.upperBound }
     private var lengthIsValid: Bool { (50...3000).contains(selectedMinimum) && selectedMaximum >= selectedMinimum && selectedMaximum <= 5000 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 VStack(alignment: .leading) {
                     Text("今日日报").font(.title2.weight(.bold))
-                    Text("按项目归类输出固定三段，生成时可控制字数。") .font(.caption).foregroundStyle(.secondary)
+                    Text("选择模板和今日关联分类，确认来源后生成。")
+                        .font(AppTypography.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("关闭") { dismiss() }
+                Button("关闭") { requestClose() }
             }
-            HStack(spacing: 12) {
-                Picker("字数", selection: $lengthPreset) {
-                    ForEach(ReportLengthPreset.allCases) { Text($0.rawValue).tag($0) }
+            .padding(AppSpacing.x6)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.x5) {
+                    Picker("日报模板", selection: $template) {
+                        ForEach(ReportTemplatePreset.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    HStack {
+                        Label("今日关联分类", systemImage: "tag")
+                            .font(AppTypography.headline)
+                        Spacer()
+                        Text("\(sourceTasks.count) / \(candidateTasks.count) 项来源")
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
+                    }
+                    Toggle("全部类别", isOn: Binding(
+                        get: { !filtersCategories },
+                        set: { filtersCategories = !$0 }
+                    ))
+                        .onChange(of: filtersCategories) { _, filters in
+                            if filters { selectedCategories = Set(categoryKeys) }
+                        }
+                    if filtersCategories {
+                        if categoryKeys.isEmpty {
+                            Text("今天尚无关联任务分类，可填写补充内容。")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], alignment: .leading,
+                                      spacing: AppSpacing.x2) {
+                                ForEach(categoryKeys, id: \.self) { key in
+                                    Toggle(key.isEmpty ? "未分类" : key, isOn: Binding(
+                                        get: { selectedCategories.contains(key) },
+                                        set: { selected in
+                                            if selected { selectedCategories.insert(key) }
+                                            else { selectedCategories.remove(key) }
+                                        }
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                    if !sourceTasks.isEmpty {
+                        Text(sourceTasks.prefix(6).map(\.title).joined(separator: " · ") +
+                             (sourceTasks.count > 6 ? " 等" : ""))
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    DisclosureGroup("字数设置") {
+                        HStack(spacing: AppSpacing.x3) {
+                            Picker("字数", selection: $lengthPreset) {
+                                ForEach(ReportLengthPreset.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            if lengthPreset == .custom {
+                                TextField("最少", value: $customMinimum, format: .number).frame(width: 62)
+                                Text("～").foregroundStyle(.secondary)
+                                TextField("最多", value: $customMaximum, format: .number).frame(width: 62)
+                            } else {
+                                Text("\(selectedMinimum)～\(selectedMaximum) 字")
+                                    .font(AppTypography.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if !lengthIsValid {
+                        Text("最少字数须在 50～3000 之间；最多字数不得小于最少字数且不超过 5000。")
+                            .font(AppTypography.caption).foregroundStyle(AppColors.danger)
+                    }
+                    VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                        Label("日报补充", systemImage: "text.badge.plus")
+                            .font(AppTypography.headline)
+                        TextField("会议信息、结论、风险或想强调的内容…", text: $supplement, axis: .vertical)
+                            .lineLimit(3...6)
+                            .textFieldStyle(.plain)
+                            .padding(AppSpacing.x3)
+                            .background(preferences.cardBackground,
+                                        in: RoundedRectangle(cornerRadius: AppRadius.control))
+                            .overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
+                    }
+                    Divider()
+                    if store.isReportLoading {
+                        ProgressView("正在生成日报…").frame(maxWidth: .infinity, minHeight: 80)
+                    }
+                    if let error = store.reportError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(AppColors.danger)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if content.isEmpty && !store.isReportLoading {
+                        AppEmptyState(title: sourceTasks.isEmpty ? "还没有可生成的内容" : "可以生成日报了",
+                                      message: sourceTasks.isEmpty ? "选择今日任务分类或填写日报补充。" : "当前选中的任务与补充内容将作为生成来源。",
+                                      systemImage: "doc.text")
+                            .frame(maxWidth: .infinity, minHeight: 170)
+                    } else if !content.isEmpty {
+                        VStack(alignment: .leading, spacing: AppSpacing.x2) {
+                            Label("日报正文 · 可编辑", systemImage: "square.and.pencil")
+                                .font(AppTypography.headline)
+                            TextEditor(text: $content)
+                                .font(AppTypography.body)
+                                .scrollContentBackground(.hidden)
+                                .frame(minHeight: 250)
+                                .padding(AppSpacing.x2)
+                                .overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
+                        }
+                    }
+                    if let warning = store.reportLengthWarning {
+                        Label(warning, systemImage: "exclamationmark.triangle")
+                            .font(AppTypography.caption).foregroundStyle(AppColors.warning)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 380)
-                if lengthPreset == .custom {
-                    TextField("最少", value: $customMinimum, format: .number).frame(width: 62)
-                    Text("～").foregroundStyle(.secondary)
-                    TextField("最多", value: $customMaximum, format: .number).frame(width: 62)
-                    Text("字").foregroundStyle(.secondary)
-                } else {
-                    Text("\(selectedMinimum)～\(selectedMaximum) 字")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                .padding(AppSpacing.x6)
             }
-            if !lengthIsValid {
-                Text("最少字数须在 50～3000 之间；最多字数不得小于最少字数且不超过 5000。")
-                    .font(.caption).foregroundStyle(.red)
-            }
-            VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Label("日报补充", systemImage: "text.badge.plus")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text("会议信息、结论、风险或想强调的内容")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                TextEditor(text: $supplement)
-                    .font(.body)
-                    .padding(6)
-                    .frame(height: 92)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-            }
-            if store.isReportLoading {
-                ProgressView("正在生成日报…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if content.isEmpty {
-                ContentUnavailableView("准备好复盘了吗？", systemImage: "sparkles", description: Text(store.reportError ?? "DeepSeek 将按项目合并同类事项，并给出明日重点规划。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                TextEditor(text: $content).font(.body).padding(6).overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-            }
-            if let warning = store.reportLengthWarning {
-                Label(warning, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
-            }
+            Divider()
             HStack {
                 if !content.isEmpty {
                     Button("复制 Markdown") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(content, forType: .string) }
-                    Button(isSaved ? "已保存" : "保存日报", systemImage: isSaved ? "checkmark" : "tray.and.arrow.down") {
-                        store.saveReport(content: content, supplement: supplement, minimumLength: selectedMinimum, maximumLength: selectedMaximum)
-                        isSaved = true
+                    Button(content == savedContent ? "已保存" : "保存日报", systemImage: content == savedContent ? "checkmark" : "tray.and.arrow.down") {
+                        savedReportID = store.saveReport(content: content, supplement: supplement,
+                                                         minimumLength: selectedMinimum,
+                                                         maximumLength: selectedMaximum,
+                                                         updating: savedReportID)
+                        savedContent = content
                     }
-                    .disabled(isSaved)
-                    Text("\(content.count) 字").font(.caption).foregroundStyle(.secondary)
+                    .disabled(content == savedContent)
+                    Text("\(content.count) 字").font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("生成日报", systemImage: "sparkles") {
-                    Task {
-                        content = await store.generateReport(
-                            endpoint: preferences.deepSeekEndpoint,
-                            model: preferences.deepSeekModel,
-                            supplement: supplement,
-                            minimumLength: selectedMinimum,
-                            maximumLength: selectedMaximum
-                        ) ?? content
-                        isSaved = false
-                    }
-                }
+                Button(content.isEmpty ? "生成日报" : "重新生成", systemImage: "sparkles") { requestGeneration() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isReportLoading || !lengthIsValid)
+                    .disabled(store.isReportLoading || !canGenerate)
             }
+            .padding(AppSpacing.x4)
         }
-        .padding(24)
-        .frame(width: 760, height: 720)
+        .font(AppTypography.desktop(.body, scale: preferences.fontScale,
+                                    design: preferences.fontStyle.design))
+        .frame(width: min(800, (NSScreen.main?.visibleFrame.width ?? 1000) - 80),
+               height: min(640, (NSScreen.main?.visibleFrame.height ?? 800) - 160))
+        .onAppDialogCancel { requestClose() }
+        .onDisappear { generationID = UUID(); generationTask?.cancel() }
+        .confirmationDialog("替换已编辑的日报？", isPresented: $showReplaceConfirmation) {
+            Button("重新生成", role: .destructive) { generate() }
+            Button("保留当前内容", role: .cancel) { }
+        } message: { Text("新结果会覆盖当前正文；已保存的历史内容仍可在日报页面查看。") }
+        .confirmationDialog("放弃未保存的日报？", isPresented: $showDiscardConfirmation) {
+            Button("放弃修改", role: .destructive) { generationID = UUID(); generationTask?.cancel(); dismiss() }
+            Button("继续编辑", role: .cancel) { }
+        }
+    }
+
+    private func requestGeneration() {
+        if !content.isEmpty && content != lastGeneratedContent { showReplaceConfirmation = true }
+        else { generate() }
+    }
+
+    private func generate() {
+        let request = ReportRequest(tasks: sourceTasks, template: template, supplement: supplement,
+                                    minimumLength: selectedMinimum, maximumLength: selectedMaximum,
+                                    sendNotes: preferences.aiSendNotes, sendProject: preferences.aiSendProject)
+        let id = UUID()
+        generationID = id
+        generationTask = Task {
+            let result = await store.generateReport(endpoint: preferences.deepSeekEndpoint,
+                                                    model: preferences.deepSeekModel, request: request)
+            guard generationID == id, let result else { return }
+            content = result
+            lastGeneratedContent = result
+        }
+    }
+
+    private func requestClose() {
+        if (!content.isEmpty && content != savedContent) ||
+            (content.isEmpty && !supplement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+            showDiscardConfirmation = true
+        } else {
+            generationID = UUID()
+            generationTask?.cancel()
+            dismiss()
+        }
     }
 }
 
@@ -1475,7 +1636,7 @@ struct MenuBarView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("今天的计划").font(.headline)
-                    Text("已完成 \(store.completionText) 项").font(.caption).foregroundStyle(.secondary)
+                    Text("已完成 \(store.completionText) 项").font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { openWindow(id: "main") } label: { Image(systemName: "arrow.up.right.square") }.buttonStyle(.plain)
@@ -1501,7 +1662,7 @@ struct MenuBarView: View {
                         Image(systemName: item.type.icon).foregroundStyle(.pink)
                         Text(item.displayName).lineLimit(1)
                         Spacer()
-                        if let days = item.daysRemaining() { Text(days == 0 ? "今天" : "\(days)天").font(.caption).foregroundStyle(.secondary) }
+                        if let days = item.daysRemaining() { Text(days == 0 ? "今天" : "\(days)天").font(AppTypography.caption).foregroundStyle(.secondary) }
                     }
                 }
             }
@@ -1567,7 +1728,7 @@ struct SettingsView: View {
                     if preferences.dailyReviewEnabled {
                         DatePicker("提醒时间", selection: $preferences.dailyReviewTime, displayedComponents: .hourAndMinute)
                         Text("到点后会通过 macOS 通知提醒你生成日报。")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1584,13 +1745,13 @@ struct SettingsView: View {
                     TextField("图片识别模型", text: $preferences.deepSeekVisionModel)
                     TextField("接口地址", text: $preferences.deepSeekEndpoint)
                     Text("图片识别默认使用 deepseek-flash。选择图片并生成草稿时，图片和补充说明会发送到所设接口；密钥保存在 macOS 钥匙串中。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Section("AI 数据范围") {
                     Toggle("重新规划时发送项目名称", isOn: $preferences.aiSendProject)
                     Toggle("重新规划时发送任务备注", isOn: $preferences.aiSendNotes)
                     Text("任务标题、日期、时长、状态、阻塞原因和蓝图截止日期是重新规划所需字段。完整蓝图生成功能只发送你当次填写的目标。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

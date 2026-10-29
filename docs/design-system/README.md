@@ -15,7 +15,7 @@ macOS 业务弹窗统一通过 `appDialog` 使用添加事项同款透明面板�
 
 [分类页面设计稿](mockups/categories-design.md) 展示 macOS 与 iPhone 的浅色、深色及空状态布局，供后续渐进式页面改造参考。
 
-[macOS 分类与图标库 V2](mockups/categories-macos-v2.md) 基于当前工作区梳理类别、任务状态与删除逻辑，提供更新后的信息层级、类别编辑及可搜索 SF Symbols 图标库的交互设计稿；本方案尚未迁移到应用。
+[macOS 分类与图标库 V2](mockups/categories-macos-v2.md) 的轻量双栏、类别编辑和可搜索 SF Symbols 图标库已迁移到 macOS 应用；图标作为本机显示偏好保存，不改变任务、备份和同步格式，验证见[迁移记录](rollout.md)。
 
 [任务添加体验分析](task-entry-analysis.md) 对照现有 macOS 与 iOS 入口，提出聚焦式捕获方案；[交互设计稿](mockups/task-entry-concept.html)展示两平台的首屏与上下文预设。
 
@@ -32,6 +32,8 @@ macOS 业务弹窗统一通过 `appDialog` 使用添加事项同款透明面板�
 [macOS 事项 V3](mockups/tasks-macos-v3.md)按任务系列分为独立卡片，所有系列默认收起，点击后只展开当前系列；四象限也按系列分组，提供浅深色及展开状态设计稿。
 
 逐页迁移范围、组件映射与验证结果记在 [迁移记录](rollout.md)；新增页面参照最近的同平台示例。
+
+[macOS 20 项体验优化技术方案](macos-experience-roadmap-2026-10.md)梳理项目、任务系列、分类与蓝图的边界，以及创建表单、主窗口蓝图、日报模板和周/月/年复盘的实施顺序；文末记录本轮已实施范围与后续数据迁移。[字体审计](typography-audit-2026-10.md)保留实施前的字号基线。
 
 ## 背景与进度
 

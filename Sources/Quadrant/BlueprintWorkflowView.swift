@@ -143,7 +143,7 @@ struct BlueprintWorkflowView: View {
             Label("节点工作流", systemImage: "point.3.connected.trianglepath.dotted")
                 .font(.headline)
             Text("\(scopedTasks.filter(\.isCompleted).count)/\(scopedTasks.filter { !$0.isCancelled }.count) 已完成")
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(AppTypography.callout).foregroundStyle(.secondary)
             Spacer()
             Button(isStageSidebarShowing ? "收起阶段" : "阶段", systemImage: "square.stack.3d.up") {
                 isStageSidebarShowing.toggle()
@@ -161,7 +161,7 @@ struct BlueprintWorkflowView: View {
                 Button { zoom = max(0.8, zoom - 0.1) } label: { Image(systemName: "minus.magnifyingglass").comfortableIconTarget(36) }
                     .help("缩小").accessibilityLabel("缩小画布")
                 Text("\(Int(zoom * 100))%")
-                    .font(.subheadline.monospacedDigit()).frame(width: 46)
+                    .font(AppTypography.callout.monospacedDigit()).frame(width: 46)
                 Button { zoom = min(1.5, zoom + 0.1) } label: { Image(systemName: "plus.magnifyingglass").comfortableIconTarget(36) }
                     .help("放大").accessibilityLabel("放大画布")
             }
@@ -194,7 +194,7 @@ struct BlueprintWorkflowView: View {
                 .padding(.horizontal, 14)
                 if store.stages(for: blueprint.id).isEmpty {
                     Text("可在概览中添加阶段；任务也可以不分组。")
-                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14)
+                        .font(AppTypography.caption).foregroundStyle(.secondary).padding(.horizontal, 14)
                 }
                 ForEach(store.stages(for: blueprint.id)) { stage in
                     let tasks = scopedTasks.filter { $0.stageID == stage.id }
@@ -204,9 +204,9 @@ struct BlueprintWorkflowView: View {
                                 selectedID = tasks.first(where: { !$0.isCompleted })?.id ?? tasks.first?.id
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(stage.name).font(.subheadline.weight(.medium)).lineLimit(1)
+                                    Text(stage.name).font(AppTypography.callout.weight(.medium)).lineLimit(1)
                                     Text("\(tasks.filter(\.isCompleted).count)/\(tasks.count) 已完成")
-                                        .font(.caption).foregroundStyle(.secondary)
+                                        .font(AppTypography.caption).foregroundStyle(.secondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -218,7 +218,7 @@ struct BlueprintWorkflowView: View {
                         ForEach(store.milestones(for: stage.id)) { milestone in
                             Button { withHistory { store.toggleMilestone(milestone) } } label: {
                                 Label(milestone.name, systemImage: milestone.isCompleted ? "flag.checkered" : "flag")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    .font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             .buttonStyle(.plain)
                             .frame(minHeight: 36)
@@ -238,7 +238,7 @@ struct BlueprintWorkflowView: View {
     private var quickAddBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "plus.circle.fill").foregroundStyle(preferences.accentColor)
-            Text(quickAddHint).font(.subheadline).foregroundStyle(.secondary)
+            Text(quickAddHint).font(AppTypography.callout).foregroundStyle(.secondary)
             TextField("输入任务标题，回车创建", text: $quickTitle)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 290)
@@ -311,7 +311,7 @@ struct BlueprintWorkflowView: View {
                        let to = nodes.first(where: { $0.id == edge.to }),
                        let start = layout[edge.from], let end = layout[edge.to] {
                         Button { beginAdd(.insert(edge.from, edge.to)) } label: {
-                            Image(systemName: "plus").font(.subheadline.weight(.bold))
+                            Image(systemName: "plus").font(AppTypography.callout.weight(.bold))
                                 .frame(width: 36, height: 36)
                                 .background(.regularMaterial, in: Circle())
                         }
@@ -361,7 +361,7 @@ struct BlueprintWorkflowView: View {
                         Image(systemName: "point.3.connected.trianglepath.dotted").font(.largeTitle).foregroundStyle(preferences.accentColor)
                         Text("从第一步开始").font(.title3.weight(.semibold))
                         Text("输入任务标题即可创建节点，图片和详细设置可以稍后添加。")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(AppTypography.callout).foregroundStyle(.secondary)
                         Button("添加第一步", systemImage: "plus") { beginAdd(.root) }
                             .buttonStyle(.borderedProminent)
                     }
@@ -390,12 +390,12 @@ struct BlueprintWorkflowView: View {
                         VStack(alignment: .leading) {
                             Text(task.title).font(.headline)
                             if let reason = store.executionBlockReason(for: task), !task.isCompleted {
-                                Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                Text(reason).font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
                         Spacer()
                         if !task.images.isEmpty { Label("\(task.images.count)", systemImage: "photo") }
-                        Text("前置 \(task.effectiveDependencyIDs.count)").font(.caption).foregroundStyle(.secondary)
+                        Text("前置 \(task.effectiveDependencyIDs.count)").font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 5)
                 }
@@ -569,10 +569,10 @@ private struct WorkflowNodeCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Circle().fill(stateColor).frame(width: 8, height: 8)
-                Text(stateText).font(.caption.weight(.semibold)).foregroundStyle(stateColor)
+                Text(stateText).font(AppTypography.caption.weight(.semibold)).foregroundStyle(stateColor)
                 Spacer()
                 Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(AppTypography.callout).foregroundStyle(.secondary)
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 2)
@@ -580,7 +580,7 @@ private struct WorkflowNodeCard: View {
                         .onEnded { onMove($0.translation, true) })
                     .help("拖动节点")
                     .accessibilityLabel("拖动节点")
-                if !task.images.isEmpty { Label("\(task.images.count)", systemImage: "photo").font(.caption2).foregroundStyle(.secondary) }
+                if !task.images.isEmpty { Label("\(task.images.count)", systemImage: "photo").font(AppTypography.caption).foregroundStyle(.secondary) }
                 Menu {
                     Button("添加串行下一步", action: onNext)
                     Button("添加并行一步", action: onParallel)
@@ -600,7 +600,7 @@ private struct WorkflowNodeCard: View {
             Text(task.title).font(.headline).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
             if let stageName {
                 Label(stageName, systemImage: "square.stack.3d.up")
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    .font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             if let first = task.images.first, let image = first.nsImage {
                 Image(nsImage: image).resizable().scaledToFill()
@@ -608,17 +608,17 @@ private struct WorkflowNodeCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .accessibilityLabel("节点图片：\(first.name)")
             } else if !task.notes.isEmpty {
-                Text(task.notes).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(task.notes).font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(2)
                     .frame(height: 32, alignment: .topLeading)
             } else {
                 Spacer(minLength: 0)
             }
             if let blockingReason, !task.isCompleted {
-                Text(blockingReason).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                Text(blockingReason).font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             HStack {
                 Label(task.isUnscheduled ? "\(task.estimatedMinutes) 分钟 · 未安排" : "\(task.estimatedMinutes) 分钟 · \(task.scheduledFor.formatted(date: .abbreviated, time: .omitted))", systemImage: "clock")
-                    .font(.caption2).lineLimit(1)
+                    .font(AppTypography.caption).lineLimit(1)
                 Spacer()
                 Button(action: onNext) { Image(systemName: "plus.circle.fill").font(.title3).comfortableIconTarget(36) }
                     .buttonStyle(.plain).help("添加串行下一步")
@@ -714,13 +714,13 @@ private struct WorkflowInspector: View {
                 }
                 Divider()
                 HStack {
-                    Text("图片").font(.subheadline.weight(.semibold))
+                    Text("图片").font(AppTypography.callout.weight(.semibold))
                     Spacer()
                     Button("添加", systemImage: "photo.badge.plus", action: pickImages)
                 }
                 if task.images.isEmpty {
                     Text("可拖入、粘贴或选择图片；不添加也可以。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, minHeight: 65)
                         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
                 } else {
@@ -734,7 +734,7 @@ private struct WorkflowInspector: View {
                                         .accessibilityLabel("查看图片：\(image.name)")
                                 }
                             }.buttonStyle(.plain)
-                            Text(image.name).font(.caption).lineLimit(2)
+                            Text(image.name).font(AppTypography.caption).lineLimit(2)
                             Spacer()
                             if index > 0 {
                                 Button { moveImage(from: index, to: index - 1) } label: { Image(systemName: "arrow.up").comfortableIconTarget(36) }
@@ -752,7 +752,7 @@ private struct WorkflowInspector: View {
                 }
                 Button("粘贴图片", systemImage: "doc.on.clipboard", action: pasteImage)
                 Divider()
-                Text("前置任务").font(.subheadline.weight(.semibold))
+                Text("前置任务").font(AppTypography.callout.weight(.semibold))
                 ForEach(task.effectiveDependencyIDs, id: \.self) { id in
                     HStack {
                         Button(store.tasks.first(where: { $0.id == id })?.title ?? "失效任务") { onSelect(id) }
@@ -768,7 +768,7 @@ private struct WorkflowInspector: View {
                     }
                 }
                 if let reason = store.executionBlockReason(for: task), !task.isCompleted {
-                    Label(reason, systemImage: "lock").font(.caption).foregroundStyle(.orange)
+                    Label(reason, systemImage: "lock").font(AppTypography.caption).foregroundStyle(.orange)
                 }
                 HStack {
                     Button("开始", systemImage: "play.fill") { onMutation { store.start(task) } }
@@ -890,7 +890,7 @@ private struct WorkflowBulkAddView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("批量添加节点").font(.title2.weight(.semibold))
             Text("每行一个任务；串行会依次连接，并行会与当前选中节点处于同一层。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AppTypography.caption).foregroundStyle(.secondary)
             TextEditor(text: $text).font(.body).frame(minHeight: 220)
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
             Toggle("作为并行任务添加", isOn: $parallel)
@@ -927,7 +927,7 @@ private struct WorkflowExistingTaskPicker: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(task.title)
-                        Text(task.displayStatusTitle).font(.caption).foregroundStyle(.secondary)
+                        Text(task.displayStatusTitle).font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("加入") {

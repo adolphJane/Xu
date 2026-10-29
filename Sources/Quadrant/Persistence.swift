@@ -351,18 +351,23 @@ final class StoredWeeklyReview {
     var summary: String
     var nextWeekFocus: String
     var createdAt: Date
+    var periodRaw: String?
 
     init(_ item: WeeklyReviewItem) {
         id = item.id; weekStart = item.weekStart; summary = item.summary
         nextWeekFocus = item.nextWeekFocus; createdAt = item.createdAt
+        periodRaw = item.period?.rawValue
     }
 
     func update(from item: WeeklyReviewItem) {
         weekStart = item.weekStart; summary = item.summary; nextWeekFocus = item.nextWeekFocus
+        periodRaw = item.period?.rawValue
     }
 
     var item: WeeklyReviewItem {
-        WeeklyReviewItem(id: id, weekStart: weekStart, summary: summary, nextWeekFocus: nextWeekFocus, createdAt: createdAt)
+        WeeklyReviewItem(id: id, weekStart: weekStart, summary: summary,
+                         nextWeekFocus: nextWeekFocus, createdAt: createdAt,
+                         period: periodRaw.flatMap(ReviewPeriod.init(rawValue:)))
     }
 }
 

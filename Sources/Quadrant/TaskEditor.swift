@@ -81,13 +81,19 @@ struct TaskEditor: View {
             Divider()
             Form {
                 Section {
-                    TaskCategoryField(category: $category, allowsCustomInput: original == nil)
+                    TaskCategoryField(category: $category)
                     Picker("四象限", selection: $quadrant) {
                         ForEach(Quadrant.allCases) { Text($0.title).tag($0) }
                     }
-                    TextField("所属项目", text: $project, prompt: Text("可选，用于日报归类"))
-                    Picker("日报分类", selection: $reportCategory) {
-                        ForEach(ReportCategory.allCases) { Text($0.title).tag($0) }
+                    Picker("所属项目", selection: $blueprintID) {
+                        Text("无项目").tag(nil as UUID?)
+                        ForEach(store.blueprints.filter { $0.archivedAt == nil || $0.id == blueprintID }) {
+                            Text($0.name).tag($0.id as UUID?)
+                        }
+                    }
+                    if !project.isEmpty && blueprintID == nil {
+                        Text("历史项目名称：\(project)")
+                            .font(AppTypography.caption).foregroundStyle(AppColors.textSecondary)
                     }
                 } header: {
                     sectionTitle("基本信息", symbol: "slider.horizontal.3")
@@ -122,17 +128,15 @@ struct TaskEditor: View {
                         }
                     }
                     if isScheduled {
-                        Toggle("锁定计划日期", isOn: $isPlanLocked)
-                            .help("AI 重新规划时保留此日期")
+                        Toggle("固定安排", isOn: $isPlanLocked)
+                            .help("批量调整与 AI 重新规划会跳过此事项；手动改期需先关闭固定安排。")
                     }
                 } header: {
                     sectionTitle("时间安排", symbol: "calendar")
                 }
 
                 Section {
-                    TextField("添加备注…", text: $notes, axis: .vertical)
-                        .lineLimit(3...6)
-                        .accessibilityLabel("备注，可选")
+                    TaskNotesField(text: $notes, showsTitle: false)
                 } header: {
                     sectionTitle("备注", symbol: "text.alignleft")
                 }
@@ -222,11 +226,12 @@ struct TaskEditor: View {
                 NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
             }
         }
-        .onChange(of: blueprintID) { _, newValue in
+        .onChange(of: blueprintID) { oldValue, newValue in
             stageID = nil
             milestoneID = nil
             dependencyIDs = []
-            if let newValue, project.isEmpty {
+            let oldName = store.blueprints.first { $0.id == oldValue }?.name ?? ""
+            if project.isEmpty || project == oldName || newValue != nil {
                 project = store.blueprints.first { $0.id == newValue }?.name ?? ""
             }
         }
@@ -342,11 +347,9 @@ struct TaskEditor: View {
                         .tag(candidate.id as UUID?)
                 }
             }
-        } else {
-            Picker("关联蓝图", selection: $blueprintID) {
-                Text("不关联蓝图").tag(nil as UUID?)
-                ForEach(store.blueprints) { Text($0.name).tag($0.id as UUID?) }
-            }
+        }
+        Picker("日报章节（旧记录）", selection: $reportCategory) {
+            ForEach(ReportCategory.allCases) { Text($0.title).tag($0) }
         }
         if let blueprintID, !store.stages(for: blueprintID).isEmpty {
             Picker("所属阶段", selection: $stageID) {
@@ -441,6 +444,11 @@ struct TaskEditor: View {
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanTitle.isEmpty else {
             formError = "请输入事项名称。"
+            return false
+        }
+        if let current, current.planLocked, isPlanLocked,
+           (!isScheduled || !Calendar.current.isDate(scheduledFor, inSameDayAs: current.scheduledFor)) {
+            formError = "此事项已固定安排。请先关闭“固定安排”，再修改日期。"
             return false
         }
         let task = TaskItem(

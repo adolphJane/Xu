@@ -41,6 +41,29 @@ final class PhaseTwoTests: XCTestCase {
         XCTAssertEqual(try persistence.loadWeeklyReviews().first?.nextWeekFocus, "稳定性测试")
     }
 
+    func testReviewPeriodsUseCalendarBoundariesAndPersist() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let reference = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 12, day: 31)))
+        let month = try XCTUnwrap(ReviewPeriod.month.interval(containing: reference, calendar: calendar))
+        let year = try XCTUnwrap(ReviewPeriod.year.interval(containing: reference, calendar: calendar))
+        XCTAssertEqual(calendar.component(.month, from: month.start), 12)
+        XCTAssertEqual(calendar.component(.year, from: month.end), 2027)
+        XCTAssertEqual(calendar.component(.year, from: year.end), 2027)
+
+        let persistence = try PersistenceController(inMemory: true)
+        let review = WeeklyReviewItem(weekStart: month.start, summary: "完成月度工作",
+                                      nextWeekFocus: "下月计划", period: .month)
+        try persistence.saveWeeklyReviews([review])
+        let loaded = try XCTUnwrap(persistence.loadWeeklyReviews().first)
+        XCTAssertEqual(loaded.id, review.id)
+        XCTAssertEqual(loaded.effectivePeriod, .month)
+
+        let legacy = WeeklyReviewItem(weekStart: reference, summary: "旧周总结", nextWeekFocus: "下周")
+        let decoded = try JSONDecoder().decode(WeeklyReviewItem.self, from: JSONEncoder().encode(legacy))
+        XCTAssertEqual(decoded.effectivePeriod, .week)
+    }
+
     func testYearlySolarAnniversaryFindsNextOccurrence() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 struct BlueprintsView: View {
     @EnvironmentObject private var store: TaskStore
     @State private var isAdding = false
-    @State private var selectedBlueprint: BlueprintItem?
-    @State private var selectedTaskRoot: TaskItem?
+    var onOpenBlueprint: ((BlueprintItem) -> Void)? = nil
+    var onOpenTaskRoot: ((TaskItem) -> Void)? = nil
     @State private var isChoosingTemplate = false
     @State private var showArchived = false
     @State private var importMessage: String?
@@ -53,7 +53,10 @@ struct BlueprintsView: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(taskRoots) { root in
-                            Button { selectedTaskRoot = root } label: {
+                            Button {
+                                if let onOpenTaskRoot { onOpenTaskRoot(root) }
+                                else { TaskBlueprintNavigation.open(root) }
+                            } label: {
                                 TaskBlueprintCard(root: root)
                             }
                             .buttonStyle(.plain)
@@ -61,7 +64,10 @@ struct BlueprintsView: View {
                         }
                         ForEach(visibleBlueprints) { blueprint in
                             BlueprintCard(blueprint: blueprint)
-                                .onTapGesture { selectedBlueprint = blueprint }
+                                .onTapGesture {
+                                    if let onOpenBlueprint { onOpenBlueprint(blueprint) }
+                                    else { NotificationCenter.default.post(name: .showBlueprint, object: blueprint.id) }
+                                }
                         }
                     }
                 }
@@ -75,8 +81,6 @@ struct BlueprintsView: View {
             BlueprintEditor()
         }
         .appDialog(isPresented: $isAICreating) { AIBlueprintCreatorView() }
-        .appDialog(item: $selectedBlueprint) { BlueprintDetailView(blueprintID: $0.id) }
-        .appDialog(item: $selectedTaskRoot) { TaskBlueprintView(rootTaskID: $0.id) }
         .alert("导入蓝图", isPresented: Binding(get: { importMessage != nil }, set: { if !$0 { importMessage = nil } })) {
             Button("知道了") { importMessage = nil }
         } message: { Text(importMessage ?? "") }
@@ -112,16 +116,16 @@ private struct TaskBlueprintCard: View {
                     .background(preferences.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(root.title).font(.headline).lineLimit(2)
-                    Text("任务蓝图").font(.caption).foregroundStyle(.secondary)
+                    Text("任务蓝图").font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
             Text("\(children.count) 项子任务 · \(children.filter(\.isCompleted).count) 项已完成")
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(AppTypography.callout).foregroundStyle(.secondary)
             ProgressView(value: children.isEmpty ? 0 : Double(children.filter(\.isCompleted).count) / Double(children.count))
                 .tint(preferences.accentColor)
             Text("与列表、四象限共用任务")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AppTypography.caption).foregroundStyle(.secondary)
         }
         .padding(18)
         .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
@@ -147,7 +151,7 @@ struct BlueprintCard: View {
                     .frame(width: 10, height: 34)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(blueprint.name).font(.headline)
-                Text(blueprint.status.title).font(.caption).foregroundStyle(.secondary)
+                Text(blueprint.status.title).font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("\(Int(store.blueprintProgress(blueprint.id) * 100))%")
@@ -164,7 +168,7 @@ struct BlueprintCard: View {
                 if blueprint.archivedAt != nil { Label("已归档", systemImage: "archivebox") }
                 Label(blueprint.dueDate.formatted(date: .abbreviated, time: .omitted), systemImage: "flag")
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(AppTypography.caption).foregroundStyle(.secondary)
         }
         .padding(18)
         .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
@@ -266,6 +270,7 @@ struct BlueprintDetailView: View {
     @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     let blueprintID: UUID
+    var onClose: (() -> Void)? = nil
     @State private var isAddingStage = false
     @State private var milestoneStage: StageItem?
     @State private var isAddingTask = false
@@ -278,8 +283,9 @@ struct BlueprintDetailView: View {
     @State private var focusedTaskID: UUID?
     @State private var isAIReplanning = false
 
-    init(blueprintID: UUID, focusTaskID: UUID? = nil) {
+    init(blueprintID: UUID, focusTaskID: UUID? = nil, onClose: (() -> Void)? = nil) {
         self.blueprintID = blueprintID
+        self.onClose = onClose
         _focusedTaskID = State(initialValue: focusTaskID)
     }
 
@@ -319,10 +325,10 @@ struct BlueprintDetailView: View {
                     ContentUnavailableView("蓝图不存在", systemImage: "exclamationmark.triangle")
                 }
             }
-            .frame(minWidth: 1100, minHeight: 740)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .top, spacing: 0) {
                 HStack(spacing: AppSpacing.x3) {
-                    Button("关闭") { dismiss() }
+                    Button(onClose == nil ? "关闭" : "返回工作区") { close() }
                     Spacer()
                     Button("编辑", systemImage: "pencil") { isEditing = true }
                     Menu {
@@ -366,7 +372,7 @@ struct BlueprintDetailView: View {
         }
         .confirmationDialog("删除蓝图？", isPresented: $showDeleteConfirmation) {
             Button("删除蓝图", role: .destructive) {
-                if let blueprint { store.deleteBlueprint(blueprint); dismiss() }
+                if let blueprint { store.deleteBlueprint(blueprint); close() }
             }
         } message: {
             Text("阶段和里程碑会被删除，关联任务将保留并解除蓝图关联。")
@@ -376,13 +382,17 @@ struct BlueprintDetailView: View {
         } message: { Text(operationMessage ?? "") }
     }
 
+    private func close() {
+        if let onClose { onClose() } else { dismiss() }
+    }
+
     private func blueprintHeader(_ blueprint: BlueprintItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(blueprint.name).font(.title2.weight(.bold))
                     Text(blueprint.goal.isEmpty ? "尚未填写目标说明" : blueprint.goal)
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        .font(AppTypography.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
                 Spacer()
                 Menu(blueprint.status.title) {
@@ -403,7 +413,7 @@ struct BlueprintDetailView: View {
                     Text("目标日期 \(blueprint.dueDate.formatted(date: .abbreviated, time: .omitted))")
                 }
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(AppTypography.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -416,7 +426,7 @@ struct BlueprintDetailView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("今日行动").font(.title2.weight(.bold))
                 Text(todayTasks.isEmpty ? "今天还没有从蓝图中安排动作" : "\(todayTasks.filter(\.isCompleted).count)/\(todayTasks.filter { !$0.isCancelled }.count) 已完成 · 待投入 \(todayTasks.filter(\.needsAction).reduce(0) { $0 + $1.estimatedMinutes }) 分钟")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(AppTypography.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button("添加今日任务", systemImage: "plus.circle") { isAddingTask = true }
@@ -491,7 +501,7 @@ struct StagePanel: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(stage.name).font(.headline)
                     Text("\(stage.startDate.formatted(date: .abbreviated, time: .omitted)) → \(stage.dueDate.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { store.moveStage(stage, direction: -1) } label: { Image(systemName: "arrow.up").comfortableIconTarget(36) }.disabled(isFirst)
@@ -501,7 +511,7 @@ struct StagePanel: View {
             Divider()
             let milestones = store.milestones(for: stage.id)
             if milestones.isEmpty {
-                Text("暂无里程碑").font(.subheadline).foregroundStyle(.tertiary)
+                Text("暂无里程碑").font(AppTypography.callout).foregroundStyle(.tertiary)
             } else {
                 ForEach(milestones) { milestone in
                     HStack {
@@ -512,7 +522,7 @@ struct StagePanel: View {
                         }.buttonStyle(.plain)
                         Text(milestone.name).strikethrough(milestone.isCompleted)
                         Spacer()
-                        Text(milestone.dueDate, format: .dateTime.month().day()).font(.caption).foregroundStyle(.secondary)
+                        Text(milestone.dueDate, format: .dateTime.month().day()).font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                 }
             }

@@ -5,6 +5,7 @@ struct DesignSystemGallery: View {
     @State private var composerPresentation = TaskComposerPresentation()
     @StateObject private var composerStore = TaskStore(inMemory: true)
     @StateObject private var composerPreferences = AppPreferences()
+    @State private var exampleNotes = "和团队确认范围，再补充验收条件。"
     #endif
     var body: some View {
         ScrollView {
@@ -56,6 +57,10 @@ struct DesignSystemGallery: View {
                 Button("打开添加事项") { composerPresentation.show(.task) }
                 AppSectionHeader(title: "Task Editor", subtitle: "分区表单，支持进退场动画与未保存确认")
                 TaskEditorExample()
+                AppSectionHeader(title: "任务备注", subtitle: "创建与编辑共用的多行输入")
+                TaskNotesField(text: $exampleNotes)
+                AppSectionHeader(title: "类别与图标库", subtitle: "类别编辑草稿、搜索、分组与最近使用")
+                CategoryEditorExample()
                 AppSectionHeader(title: "Category Selection", subtitle: "直接选择类别，支持长名称与明确的选中状态")
                 TaskCategoryOptions(
                     categories: ["工作", "生活", "需要持续跟进的长期学习与个人成长计划"],

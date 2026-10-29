@@ -111,12 +111,47 @@ struct AnniversaryItem: Identifiable, Codable, Equatable {
     }
 }
 
+enum ReviewPeriod: String, CaseIterable, Codable, Identifiable {
+    case week
+    case month
+    case year
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .week: "本周"
+        case .month: "本月"
+        case .year: "本年"
+        }
+    }
+    var nextTitle: String {
+        switch self {
+        case .week: "下周重点"
+        case .month: "下月重点"
+        case .year: "明年重点"
+        }
+    }
+    var component: Calendar.Component {
+        switch self {
+        case .week: .weekOfYear
+        case .month: .month
+        case .year: .year
+        }
+    }
+    func interval(containing date: Date, calendar: Calendar = .current) -> DateInterval? {
+        calendar.dateInterval(of: component, for: date)
+    }
+}
+
 struct WeeklyReviewItem: Identifiable, Codable, Equatable {
     var id = UUID()
     var weekStart: Date
     var summary: String
     var nextWeekFocus: String
     var createdAt: Date = .now
+    var period: ReviewPeriod? = nil
+
+    var effectivePeriod: ReviewPeriod { period ?? .week }
 }
 
 enum ThemePreset: String, CaseIterable, Codable, Identifiable {

@@ -24,7 +24,7 @@ struct AITaskCreatorView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AI 一句话生成任务").font(.title2.weight(.bold))
                     Text("描述要做什么、时间、项目和优先级，AI 会先生成可编辑草稿。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("关闭") { dismiss() }
@@ -48,10 +48,10 @@ struct AITaskCreatorView: View {
                 .frame(height: 150)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
             Text("例如：明天下午完成渠道适配登录页测试，预计一小时，重要且紧急。")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(AppTypography.caption).foregroundStyle(.secondary)
             if let error = store.aiTaskError {
                 Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.orange)
+                    .font(AppTypography.caption).foregroundStyle(.orange)
             }
             Spacer()
             HStack {
@@ -96,8 +96,8 @@ struct AITaskCreatorView: View {
                     Stepper("预计时长：\(estimatedMinutes) 分钟", value: $estimatedMinutes, in: 5...480, step: 5)
                     if !subtasks.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("建议子任务").font(.subheadline.weight(.semibold))
-                            ForEach(subtasks, id: \.self) { Text("• \($0)").font(.subheadline) }
+                            Text("建议子任务").font(AppTypography.callout.weight(.semibold))
+                            ForEach(subtasks, id: \.self) { Text("• \($0)").font(AppTypography.callout) }
                         }
                     }
                 }

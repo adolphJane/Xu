@@ -57,7 +57,7 @@ struct AnniversariesView: View {
                     eyebrow: "MILESTONES IN LIFE",
                     title: "纪念日",
                     description: "记住重要的人与日子，提前准备，但由你决定是否创建任务。",
-                    action: { isAdding = true },
+                    action: store.anniversaries.isEmpty ? nil : { isAdding = true },
                     actionTitle: "新建纪念日"
                 )
 
@@ -82,7 +82,9 @@ struct AnniversariesView: View {
                 }
 
                 if store.anniversaries.isEmpty {
-                    ContentUnavailableView("还没有纪念日", systemImage: "calendar.badge.plus", description: Text("创建生日、纪念日或项目节点，并设置提前提醒。"))
+                    AppEmptyState(title: "记录一个重要日子", message: "创建生日、纪念日或项目节点，并设置提前提醒。",
+                                  systemImage: "calendar.badge.plus", actionTitle: "新建纪念日",
+                                  action: { isAdding = true })
                         .frame(maxWidth: .infinity, minHeight: 360)
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 16)], spacing: 16) {
@@ -145,9 +147,9 @@ struct AnniversaryCard: View {
                 Text(item.repeatRule.rawValue)
                 Text("· 提前 \(item.reminderDays) 天")
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(AppTypography.caption).foregroundStyle(.secondary)
             if !item.contact.isEmpty && !item.privacyMode {
-                Label(item.contact, systemImage: "person").font(.caption).foregroundStyle(.secondary)
+                Label(item.contact, systemImage: "person").font(AppTypography.caption).foregroundStyle(.secondary)
             }
         }
         .padding(16)
@@ -236,7 +238,7 @@ struct AnniversaryEditor: View {
                     if preparationEnabled {
                         Stepper("提前 \(preparationLeadDays) 天开始准备", value: $preparationLeadDays, in: 1...365)
                         TextField("准备任务名称（可选）", text: $preparationTaskTitle)
-                        Text("应用只会展示预览，确认后才创建任务。").font(.caption).foregroundStyle(.secondary)
+                        Text("应用只会展示预览，确认后才创建任务。").font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -316,7 +318,7 @@ struct BlueprintTimelineView: View {
                     ForEach(0...totalDays, id: \.self) { day in
                         if day % 7 == 0 {
                             Text(calendar.date(byAdding: .day, value: day, to: blueprint.startDate) ?? blueprint.startDate, format: .dateTime.month().day())
-                                .font(.caption2).frame(width: dayWidth * 7, alignment: .leading)
+                                .font(AppTypography.caption).frame(width: dayWidth * 7, alignment: .leading)
                         }
                     }
                 }
@@ -339,7 +341,7 @@ struct BlueprintTimelineView: View {
         let offset = max(0, calendar.dateComponents([.day], from: blueprint.startDate, to: start).day ?? 0)
         let duration = max(1, calendar.dateComponents([.day], from: start, to: end).day ?? 1)
         return VStack(alignment: .leading, spacing: 3) {
-            Text(name).font(.caption).lineLimit(1)
+            Text(name).font(AppTypography.caption).lineLimit(1)
             ZStack(alignment: .leading) {
                 if let baseline {
                     let baselineOffset = max(0, calendar.dateComponents([.day], from: blueprint.startDate, to: baseline.0).day ?? 0)
@@ -374,13 +376,13 @@ struct BlueprintScheduleView: View {
             } else {
                 ForEach(Dictionary(grouping: tasks, by: { Calendar.current.startOfDay(for: $0.scheduledFor) }).keys.sorted(), id: \.self) { date in
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(date, format: .dateTime.month().day().weekday()).font(.subheadline.weight(.semibold))
+                        Text(date, format: .dateTime.month().day().weekday()).font(AppTypography.callout.weight(.semibold))
                         ForEach(tasks.filter { Calendar.current.isDate($0.scheduledFor, inSameDayAs: date) }) { task in
                             HStack {
                                 Circle().fill(task.quadrant.tint).frame(width: 7, height: 7)
                                 Text(task.title)
                                 Spacer()
-                                Text(task.displayStatusTitle).font(.caption).foregroundStyle(.secondary)
+                                Text(task.displayStatusTitle).font(AppTypography.caption).foregroundStyle(.secondary)
                             }.padding(.vertical, 3)
                         }
                     }
@@ -409,7 +411,7 @@ struct ReschedulePreviewView: View {
                     Text(task.title).lineLimit(1)
                     Spacer()
                     Text("\(task.originalScheduledFor ?? task.scheduledFor, format: .dateTime.month().day()) → \(task.scheduledFor, format: .dateTime.month().day())")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(AppTypography.caption).foregroundStyle(.secondary)
                 }
             }
             HStack {
@@ -437,7 +439,7 @@ struct BlueprintTemplatePicker: View {
                         Image(systemName: template.icon).font(.title2).frame(width: 34)
                         VStack(alignment: .leading) {
                             Text(template.rawValue).font(.headline)
-                            Text(template.stageNames.joined(separator: " → ")).font(.caption).foregroundStyle(.secondary)
+                            Text(template.stageNames.joined(separator: " → ")).font(AppTypography.caption).foregroundStyle(.secondary)
                         }
                         Spacer(); Image(systemName: "chevron.right")
                     }.padding(12)
@@ -448,32 +450,51 @@ struct BlueprintTemplatePicker: View {
     }
 }
 
-struct WeeklyReviewEditor: View {
+struct ReviewEditor: View {
     @AppDismiss private var dismiss
     @EnvironmentObject private var store: TaskStore
     @State private var summary = ""
     @State private var nextWeekFocus = ""
+    @State private var period: ReviewPeriod = .week
 
-    private var weekStart: Date {
-        Calendar.current.dateInterval(of: .weekOfYear, for: .now)?.start ?? .now
+    private var interval: DateInterval {
+        period.interval(containing: .now) ?? DateInterval(start: Calendar.current.startOfDay(for: .now), duration: 86400)
     }
+    private var completedCount: Int {
+        store.tasks.filter {
+            $0.isCompleted && $0.completedAt.map { $0 >= interval.start && $0 < interval.end } == true
+        }.count
+    }
+    private var currentBlockedCount: Int { store.tasks.filter { $0.effectiveStatus == .blocked }.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("本周复盘").font(.title2.weight(.bold))
-            Text("本周完成 \(store.tasks.filter { $0.isCompleted && $0.completedAt.map { $0 >= weekStart } == true }.count) 项，阻塞 \(store.tasks.filter { $0.effectiveStatus == .blocked }.count) 项。")
-                .foregroundStyle(.secondary)
-            Text("本周总结").font(.headline)
-            TextEditor(text: $summary).padding(6).frame(height: 130).overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-            Text("下周重点").font(.headline)
-            TextEditor(text: $nextWeekFocus).padding(6).frame(height: 110).overlay(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+            Text("\(period.title)复盘").font(AppTypography.title)
+            Picker("复盘周期", selection: $period) {
+                ForEach(ReviewPeriod.allCases) { option in Text(option.title).tag(option) }
+            }
+            .pickerStyle(.segmented)
+            Text("\(interval.start.formatted(date: .abbreviated, time: .omitted))—\(interval.end.formatted(date: .abbreviated, time: .omitted)) · 现存完成记录 \(completedCount) 项")
+                .font(AppTypography.callout).foregroundStyle(.secondary)
+            Text("当前阻塞 \(currentBlockedCount) 项。历史阻塞变化尚无事件记录，不计入该周期统计。")
+                .font(AppTypography.caption).foregroundStyle(.secondary)
+            Text("\(period.title)总结").font(AppTypography.headline)
+            TextEditor(text: $summary).font(AppTypography.body).padding(AppSpacing.x2)
+                .frame(height: 130).overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
+            Text(period.nextTitle).font(AppTypography.headline)
+            TextEditor(text: $nextWeekFocus).font(AppTypography.body).padding(AppSpacing.x2)
+                .frame(height: 110).overlay(RoundedRectangle(cornerRadius: AppRadius.control).stroke(AppColors.border))
             HStack {
                 Spacer(); Button("取消") { dismiss() }
-                Button("保存周复盘") { store.saveWeeklyReview(summary: summary, nextWeekFocus: nextWeekFocus, weekStart: weekStart); dismiss() }
+                Button("保存\(period.title)复盘") {
+                    store.saveReview(period: period, interval: interval,
+                                     summary: summary, nextFocus: nextWeekFocus)
+                    dismiss()
+                }
                     .buttonStyle(.borderedProminent)
                     .disabled(summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(24).frame(width: 620, height: 560)
+        }.padding(AppSpacing.x6).frame(width: 620, height: 590)
     }
 }
 
@@ -492,7 +513,7 @@ struct ThemeSettingsView: View {
                 }
                 Section("自定义颜色") {
                     Text("在右侧输入 HEX 色值，例如 #D8A87C。留空时使用当前预置皮肤的颜色。")
-                        .font(.caption)
+                        .font(AppTypography.caption)
                         .foregroundStyle(.secondary)
                     customColorRow(title: "强调色", value: $preferences.customAccentHex, color: preferences.accentColor)
                     customColorRow(title: "页面背景", value: $preferences.customBackgroundHex, color: preferences.pageBackground)
@@ -504,7 +525,7 @@ struct ThemeSettingsView: View {
                     }
                     if preferences.automaticThemeRule == .focus {
                         Toggle("专注主题当前启用", isOn: $preferences.focusThemeActive)
-                        Text("可通过命令面板快速切换专注主题。").font(.caption).foregroundStyle(.secondary)
+                        Text("可通过命令面板快速切换专注主题。").font(AppTypography.caption).foregroundStyle(.secondary)
                     }
                 }
                 Section("四象限颜色") {
@@ -590,7 +611,7 @@ struct ThemeSettingsView: View {
             VStack(alignment: .leading, spacing: AppSpacing.x1) {
                 Text(title)
                 Text(value.wrappedValue.isEmpty ? "跟随预置皮肤" : "#\(value.wrappedValue.trimmingCharacters(in: CharacterSet(charactersIn: "#")).uppercased())")
-                    .font(.caption)
+                    .font(AppTypography.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: AppSpacing.x2)
