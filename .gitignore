@@ -2,3 +2,13 @@
 .build/
 .swiftpm/
 dist/
+.fvm/
+.dart_tool/
+build/
+.flutter-plugins*
+.idea/
+*.iml
+flutter/macos/Flutter/ephemeral/
+flutter/macos/Pods/
+iOS/Flutter/
+iOS/Runner/

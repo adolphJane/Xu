@@ -1,6 +1,7 @@
 name: Build and publish release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -23,17 +24,18 @@ jobs:
           fetch-depth: 0
 
       - name: Validate release version
+        if: github.event_name == 'push'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Packaging/Info.plist)
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' flutter/Packaging/Info.plist)
           TAG_VERSION="${RELEASE_TAG#v}"
           if [[ "${TAG_VERSION}" != "${APP_VERSION}" ]]; then
             echo "Tag ${RELEASE_TAG} does not match app version ${APP_VERSION}."
             exit 1
           fi
 
-      - name: Configure Apple signing when available
+      - name: Configure Developer ID signing and notarization
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -41,13 +43,8 @@ jobs:
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: |
-          if [[ -z "${APPLE_CERTIFICATE_P12_BASE64}${APPLE_CERTIFICATE_PASSWORD}${APPLE_NOTARY_KEY_P8}${APPLE_NOTARY_KEY_ID}${APPLE_NOTARY_ISSUER_ID}" ]]; then
-            echo "SIGNING_MODE=adhoc" >> "$GITHUB_ENV"
-            echo "Apple signing secrets are absent; publishing an explicitly marked pre-release."
-            exit 0
-          fi
           if [[ -z "$APPLE_CERTIFICATE_P12_BASE64" || -z "$APPLE_CERTIFICATE_PASSWORD" || -z "$APPLE_NOTARY_KEY_P8" || -z "$APPLE_NOTARY_KEY_ID" || -z "$APPLE_NOTARY_ISSUER_ID" ]]; then
-            echo "::error::Apple signing secrets are incomplete."
+            echo "::error::Developer ID signing and notarization secrets are required for release."
             exit 1
           fi
           KEYCHAIN_PATH="$RUNNER_TEMP/xu-signing.keychain-db"
@@ -73,12 +70,29 @@ jobs:
           echo "NOTARY_KEY_ID=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
           echo "NOTARY_ISSUER_ID=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
 
+      - name: Set up Flutter 3.47.9
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
       - name: Build universal DMG
         env:
-          RELEASE_VERSION: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && format('verify-{0}', github.run_id) || github.ref_name }}
         run: zsh scripts/package-macos.sh
 
+      - name: Verify Developer ID and notarized DMG
+        env:
+          RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && format('verify-{0}', github.run_id) || github.ref_name }}
+        run: zsh scripts/verify-developer-id.sh dist/序.app "dist/Xu-${RELEASE_VERSION}.dmg"
+
       - name: Generate release notes
+        if: github.event_name == 'push'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -95,25 +109,27 @@ jobs:
             echo "## 安装"
             echo
             echo "下载 Xu-${RELEASE_TAG}.dmg，打开 DMG 并将“序”拖到“Applications”快捷入口。"
-            if [[ "$SIGNING_MODE" == "signed" ]]; then
-              echo "此版本已通过 Developer ID 签名和 Apple 公证。"
-            else
-              echo "此版本使用临时签名，尚未通过 Apple 公证；macOS 首次打开时会显示安全提示。请参考 DMG 中的安装说明。"
-            fi
+            echo "此版本已通过 Developer ID 签名和 Apple 公证。"
           } > release-notes.md
 
       - name: Publish GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          release_flags=()
-          if [[ "$SIGNING_MODE" != "signed" ]]; then release_flags+=(--prerelease); fi
           gh release create "${GITHUB_REF_NAME}" \
             "dist/Xu-${GITHUB_REF_NAME}.dmg" \
             --title "序 ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
-            --verify-tag \
-            "${release_flags[@]}"
+            --verify-tag
+
+      - name: Upload verified DMG
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-verified-${{ github.run_id }}
+          path: dist/Xu-verify-${{ github.run_id }}.dmg
+          if-no-files-found: error
 
       - name: Remove temporary signing assets
         if: always()

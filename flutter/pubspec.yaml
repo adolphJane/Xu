@@ -1,0 +1,22 @@
+name: xu
+description: 序 macOS Flutter application
+publish_to: none
+version: 0.5.2+13
+environment:
+  sdk: '>=3.13.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  ifa_flutter_scaffold:
+    git:
+      url: https://github.com/adolphJane/ifa_flutter_scaffold.git
+      ref: 1e49f2429ac2f5cfdd39af6e4702174ec92154f7
+  path_provider: ^2.1.5
+  file_picker: ^13.3.2
+  crypto: ^3.0.6
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
