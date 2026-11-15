@@ -14,6 +14,11 @@ dependencies:
   path_provider: ^2.1.5
   file_picker: ^13.3.2
   crypto: ^3.0.6
+dependency_overrides:
+  # The pinned scaffold requests 7.3.2, which needs the macOS 26 SDK.
+  # Keep the desktop build compatible with the repository's Xcode 16 toolchain.
+  connectivity_plus: 7.0.0
+  nm: 0.6.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

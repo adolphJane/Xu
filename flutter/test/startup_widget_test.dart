@@ -69,4 +69,56 @@ void main() {
     expect(find.text('长期项目 · 任务蓝图'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('tasks workbench follows the wide window layout', (tester) async {
+    tester.view.physicalSize = const Size(1600, 970);
+    tester.view.devicePixelRatio = 1;
+    final repo = WorkspaceRepository();
+    repo.load({'formatVersion': 1});
+    Get.put<WorkspaceRepository>(repo);
+    Get.put<WorkspaceViewModel>(WorkspaceViewModel());
+    addTearDown(() {
+      Get.reset();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    await tester.pumpWidget(const XuApp());
+    await tester.tap(find.text('事项').first);
+    await tester.pumpAndSettle();
+
+    final heading = tester.getTopLeft(find.text('事项').last);
+    final filter = tester.getTopLeft(find.byType(ChoiceChip).first);
+    final search = tester.getTopLeft(find.byType(TextFormField).first);
+    expect((heading.dx - filter.dx).abs(), lessThan(40));
+    expect(search.dx, greaterThanOrEqualTo(filter.dx));
+    expect(find.text('收集、安排与推进每一件事。'), findsOneWidget);
+    expect(find.text('没有待处理事项'), findsOneWidget);
+    expect(find.text('添加事项'), findsOneWidget);
+    expect(find.text('列表'), findsOneWidget);
+    expect(find.text('四象限'), findsWidgets);
+    await tester.tap(find.text('四象限').last);
+    await tester.pumpAndSettle();
+    expect(find.text('第 1 象限'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tasks workbench fits a compact desktop window', (tester) async {
+    tester.view.physicalSize = const Size(900, 620);
+    tester.view.devicePixelRatio = 1;
+    final repo = WorkspaceRepository();
+    repo.load({'formatVersion': 1});
+    Get.put<WorkspaceRepository>(repo);
+    Get.put<WorkspaceViewModel>(WorkspaceViewModel());
+    addTearDown(() {
+      Get.reset();
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    await tester.pumpWidget(const XuApp());
+    await tester.tap(find.text('事项').first);
+    await tester.pumpAndSettle();
+    expect(find.text('添加事项'), findsOneWidget);
+    expect(find.text('没有待处理事项'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

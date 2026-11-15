@@ -15,7 +15,10 @@ class CalendarLinks {
     final links = await _read();
     final enabled = <String, Map<String, dynamic>>{
       for (final task in tasks)
-        if (task['calendarAutoSync'] == true) '${task['id']}': task,
+        if (task['calendarAutoSync'] == true &&
+            task['status'] != 'unscheduled' &&
+            DateTime.tryParse('${task['scheduledFor']}') != null)
+          '${task['id']}': task,
     };
     final failures = <String>[];
 
@@ -32,16 +35,21 @@ class CalendarLinks {
 
     for (final entry in enabled.entries) {
       final task = entry.value;
-      final scheduled = DateTime.tryParse('${task['scheduledFor']}');
-      if (scheduled == null) {
-        failures.add('“${task['title']}”缺少有效计划日期');
-        continue;
-      }
-      final start = DateTime(scheduled.year, scheduled.month, scheduled.day, 9);
-      final minutes = ((task['estimatedMinutes'] as num?)?.toInt() ?? 30).clamp(
-        1,
-        1440,
-      );
+      final scheduled = DateTime.parse('${task['scheduledFor']}');
+      final block = task['timeBlock'];
+      final blockStart = block is Map
+          ? DateTime.tryParse('${block['start']}')
+          : null;
+      final blockEnd = block is Map
+          ? DateTime.tryParse('${block['end']}')
+          : null;
+      final start =
+          blockStart ??
+          DateTime(scheduled.year, scheduled.month, scheduled.day, 9);
+      final minutes =
+          blockStart != null && blockEnd != null && blockEnd.isAfter(blockStart)
+          ? blockEnd.difference(blockStart).inMinutes.clamp(1, 1440)
+          : ((task['estimatedMinutes'] as num?)?.toInt() ?? 30).clamp(1, 1440);
       final title = '${task['title'] ?? ''}'.trim();
       if (title.isEmpty) {
         failures.add('存在无标题的日历任务');

@@ -92,6 +92,83 @@ void main() {
   });
 
   test(
+    'explicit execution block sets the synced event time and duration',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('xu-calendar-block-');
+      MethodCall? created;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(NativeBridge.channel, (call) async {
+            if (call.method == 'calendarCreate') {
+              created = call;
+              return 'event-block';
+            }
+            return true;
+          });
+      addTearDown(() async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(NativeBridge.channel, null);
+        await dir.delete(recursive: true);
+      });
+      final links = CalendarLinks(File('${dir.path}/links.json'));
+      await links.sync([
+        {
+          'id': 'task-block',
+          'title': '下午讨论',
+          'scheduledFor': '2026-11-16',
+          'estimatedMinutes': 30,
+          'calendarAutoSync': true,
+          'timeBlock': {
+            'start': '2026-11-16T14:15:00',
+            'end': '2026-11-16T15:45:00',
+          },
+        },
+      ]);
+      expect(created, isNotNull);
+      final args = created!.arguments as Map;
+      expect(
+        DateTime.parse(args['start'] as String).toLocal(),
+        DateTime(2026, 11, 16, 14, 15),
+      );
+      expect(args['minutes'], 90);
+    },
+  );
+
+  test(
+    'moving a synced task back to waiting removes its calendar event',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('xu-calendar-waiting-');
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(NativeBridge.channel, (call) async {
+            calls.add(call);
+            if (call.method == 'calendarCreate') return 'event-waiting';
+            return true;
+          });
+      addTearDown(() async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(NativeBridge.channel, null);
+        await dir.delete(recursive: true);
+      });
+      final links = CalendarLinks(File('${dir.path}/links.json'));
+      final planned = {
+        'id': 'waiting',
+        'title': '待安排事项',
+        'status': 'pending',
+        'scheduledFor': '2026-11-16',
+        'calendarAutoSync': true,
+      };
+      await links.sync([planned]);
+      await links.sync([
+        {...planned, 'status': 'unscheduled', 'scheduledFor': null},
+      ]);
+      expect(calls.map((call) => call.method), [
+        'calendarCreate',
+        'calendarDelete',
+      ]);
+    },
+  );
+
+  test(
     'task edits and removal trigger calendar link synchronization',
     () async {
       final dir = await Directory.systemTemp.createTemp('xu-calendar-vm-');

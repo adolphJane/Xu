@@ -105,9 +105,8 @@ class WorkspaceRepository extends BaseRepository {
   }
 
   Future<void> exportTo(String path) async {
-    await File(
-      path,
-    ).writeAsString(const JsonEncoder.withIndent('  ').convert(snapshot()));
+    await File(path)
+        .writeAsString(const JsonEncoder.withIndent('  ').convert(snapshot()));
   }
 
   Future<void> importFrom(String path) async {
@@ -300,13 +299,12 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   Map<String, dynamic> _historySnapshot(Map<String, dynamic> source) =>
       Map<String, dynamic>.from(
         jsonDecode(
-              jsonEncode({
-                'formatVersion': 1,
-                for (final section in repository.sections)
-                  if (section != 'planChanges') section: source[section] ?? [],
-              }),
-            )
-            as Map,
+          jsonEncode({
+            'formatVersion': 1,
+            for (final section in repository.sections)
+              if (section != 'planChanges') section: source[section] ?? [],
+          }),
+        ) as Map,
       );
   void _record(Map<String, dynamic> previous) {
     _undo.add(previous);
@@ -357,9 +355,9 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   @override
   void onInit() {
     super.onInit();
-    final preferences = items(
-      'settings',
-    ).where((e) => e['id'] == 'preferences').firstOrNull;
+    final preferences = items('settings')
+        .where((e) => e['id'] == 'preferences')
+        .firstOrNull;
     final mode = '${preferences?['themeMode'] ?? 'system'}';
     themeMode.value = ThemeMode.values.firstWhere(
       (e) => e.name == mode,
@@ -415,9 +413,8 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     final path = '${selected['path'] ?? ''}';
     final bookmark = '${selected['bookmark'] ?? ''}';
     if (path.isEmpty || bookmark.isEmpty) throw StateError('文件夹授权不完整');
-    await File(
-      '${repository.file.path}.bookmark',
-    ).writeAsString(bookmark, flush: true);
+    await File('${repository.file.path}.bookmark')
+        .writeAsString(bookmark, flush: true);
     syncFolderPath.value = path;
     _startAutoSync();
     syncStatus.value = '';
@@ -495,9 +492,8 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   Future<void> syncCalendar() {
     final next = _calendarQueue.then((_) async {
       try {
-        await CalendarLinks(
-          File('${repository.file.path}.calendar-links.json'),
-        ).sync(items('tasks'));
+        await CalendarLinks(File('${repository.file.path}.calendar-links.json'))
+            .sync(items('tasks'));
         calendarStatus.value = '系统日历已同步';
       } catch (error) {
         calendarStatus.value = '系统日历同步失败：$error';
@@ -511,9 +507,9 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     String id,
     DateTime occurrence,
   ) async {
-    final anniversary = items(
-      'anniversaries',
-    ).where((row) => '${row['id']}' == id).firstOrNull;
+    final anniversary = items('anniversaries')
+        .where((row) => '${row['id']}' == id)
+        .firstOrNull;
     if (anniversary == null ||
         anniversary['preparationEnabled'] != true ||
         anniversary['generatedTaskID'] != null) {
@@ -529,9 +525,9 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     final today = DateTime.now();
     final scheduled = planned.isBefore(today) ? today : planned;
     final blueprintId = anniversary['blueprintID'];
-    final blueprint = items(
-      'blueprints',
-    ).where((row) => row['id'] == blueprintId).firstOrNull;
+    final blueprint = items('blueprints')
+        .where((row) => row['id'] == blueprintId)
+        .firstOrNull;
     if (blueprintId != null && blueprint == null) throw StateError('关联蓝图已不存在');
     final task = <String, dynamic>{
       'id': newId(),
@@ -642,9 +638,8 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
 
   Future<void> remove(String key, String id) async {
     final previous = _copySnapshot();
-    final hadCalendarTasks = items(
-      'tasks',
-    ).any((task) => task['calendarAutoSync'] == true);
+    final hadCalendarTasks = items('tasks')
+        .any((task) => task['calendarAutoSync'] == true);
     final next = {
       for (final entry in repository.data.entries)
         entry.key: entry.value
@@ -817,18 +812,21 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     ...task,
     'dependencyIDs': [...(task['dependencyIDs'] as List? ?? []), predecessorId],
   });
-  Future<void> addCategory(String name) async {
+  Future<void> addCategory(String name, {String symbol = 'label'}) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) throw const FormatException('分类名称不能为空');
-    if (items(
-      'categories',
-    ).any((e) => '${e['name']}'.toLowerCase() == trimmed.toLowerCase())) {
+    if (items('categories')
+        .any((e) => '${e['name']}'.toLowerCase() == trimmed.toLowerCase())) {
       throw StateError('分类已存在');
     }
-    await put('categories', {'id': newId(), 'name': trimmed});
+    await put('categories', {'id': newId(), 'name': trimmed, 'symbol': symbol});
   }
 
-  Future<void> renameCategory(String oldName, String newName) async {
+  Future<void> renameCategory(
+    String oldName,
+    String newName, {
+    String? symbol,
+  }) async {
     final trimmed = newName.trim();
     if (trimmed.isEmpty) throw const FormatException('分类名称不能为空');
     if (items('categories').any(
@@ -844,8 +842,20 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
             .map((e) => Map<String, dynamic>.from(e))
             .toList(),
     };
+    var found = false;
     for (final row in next['categories']!) {
-      if (row['name'] == oldName) row['name'] = trimmed;
+      if (row['name'] == oldName) {
+        found = true;
+        row['name'] = trimmed;
+        if (symbol != null) row['symbol'] = symbol;
+      }
+    }
+    if (!found) {
+      next['categories']!.add({
+        'id': newId(),
+        'name': trimmed,
+        'symbol': symbol ?? 'label',
+      });
     }
     for (final task in next['tasks']!) {
       if (task['category'] == oldName) task['category'] = trimmed;
@@ -870,6 +880,47 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   }
 
   List<Map<String, dynamic>> get tasks => items('tasks');
+  Future<void> applyCalendarChanges(
+    List<Map<String, dynamic>> before,
+    List<Map<String, dynamic>> after,
+  ) async {
+    if (before.isEmpty || before.length != after.length) {
+      throw StateError('没有可保存的日历安排');
+    }
+    final previous = _copySnapshot();
+    final next = {
+      for (final entry in repository.data.entries)
+        entry.key: entry.value
+            .map((row) => Map<String, dynamic>.from(row))
+            .toList(),
+    };
+    for (var i = 0; i < before.length; i++) {
+      final id = '${before[i]['id']}';
+      if (id != '${after[i]['id']}') throw StateError('安排的任务 ID 不一致');
+      final index = next['tasks']!.indexWhere((row) => '${row['id']}' == id);
+      if (index < 0 ||
+          jsonEncode(next['tasks']![index]) != jsonEncode(before[i])) {
+        throw StateError('事项已在其他位置修改，请重新检查安排');
+      }
+      next['tasks']![index] = Map<String, dynamic>.from(after[i]);
+    }
+    for (final row in after) {
+      final error = TaskRules.validate(
+        row,
+        next['tasks']!,
+        next['blueprints']!,
+      );
+      if (error != null) throw StateError(error);
+    }
+    await repository.commit(next);
+    _record(previous);
+    revision.value++;
+    await updateMenu();
+    if ([...before, ...after].any((row) => row['calendarAutoSync'] == true)) {
+      await syncCalendar();
+    }
+  }
+
   Future<void> applyTaskBatch(String action) async {
     final ids = selectedTaskIds
         .where((id) => tasks.any((task) => '${task['id']}' == id))
@@ -1287,35 +1338,35 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
 
   Future<void> updateMenu() async {
     final upcoming = await Future.wait(
-      items('anniversaries').where((row) => row['showInMenuBar'] != false).map((
-        row,
-      ) async {
-        final source = DateTime.tryParse('${row['date']}');
-        if (source == null) return null;
-        try {
-          final next = await NativeBridge.anniversaryNextOccurrence(
-            source,
-            repeatYearly: row['repeatYearly'] == true,
-            lunar: row['calendar'] == 'lunar',
-          );
-          if (next == null) return null;
-          final now = DateTime.now();
-          final days = DateTime.utc(
-            next.year,
-            next.month,
-            next.day,
-          ).difference(DateTime.utc(now.year, now.month, now.day)).inDays;
-          return <String, String>{
-            'id': '${row['id']}',
-            'title': row['privacyMode'] == true ? '重要日子' : '${row['name']}',
-            'date': '${next.month}月${next.day}日',
-            'days': '$days',
-            'sortKey': next.toIso8601String(),
-          };
-        } catch (_) {
-          return null;
-        }
-      }),
+      items('anniversaries')
+          .where((row) => row['showInMenuBar'] != false)
+          .map((row) async {
+            final source = DateTime.tryParse('${row['date']}');
+            if (source == null) return null;
+            try {
+              final next = await NativeBridge.anniversaryNextOccurrence(
+                source,
+                repeatYearly: row['repeatYearly'] == true,
+                lunar: row['calendar'] == 'lunar',
+              );
+              if (next == null) return null;
+              final now = DateTime.now();
+              final days = DateTime.utc(
+                next.year,
+                next.month,
+                next.day,
+              ).difference(DateTime.utc(now.year, now.month, now.day)).inDays;
+              return <String, String>{
+                'id': '${row['id']}',
+                'title': row['privacyMode'] == true ? '重要日子' : '${row['name']}',
+                'date': '${next.month}月${next.day}日',
+                'days': '$days',
+                'sortKey': next.toIso8601String(),
+              };
+            } catch (_) {
+              return null;
+            }
+          }),
     );
     final anniversaries = upcoming.whereType<Map<String, String>>().toList()
       ..sort((a, b) => a['sortKey']!.compareTo(b['sortKey']!));

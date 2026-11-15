@@ -159,7 +159,7 @@ class MainFlutterWindow: NSWindow {
           guard granted else { result(FlutterError(code: "calendar", message: "未获得日历访问权限", details: nil)); return }
           let predicate = self.eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
           let events = self.eventStore.events(matching: predicate).map { event in
-            ["id": event.eventIdentifier ?? "", "title": event.title ?? "", "start": formatter.string(from: event.startDate), "end": formatter.string(from: event.endDate)]
+            ["id": event.eventIdentifier ?? "", "title": event.title ?? "", "start": formatter.string(from: event.startDate), "end": formatter.string(from: event.endDate), "calendarTitle": event.calendar.title, "isAllDay": event.isAllDay, "isBusy": event.availability != .free] as [String: Any]
           }
           result(events)
         }

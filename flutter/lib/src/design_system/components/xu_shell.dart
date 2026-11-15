@@ -233,12 +233,14 @@ class XuEmptyState extends StatelessWidget {
     this.description,
     this.actionLabel,
     this.onAction,
+    this.actionIcon = Icons.add,
     this.shortcutHint,
   });
   final IconData icon;
   final String title;
   final String? description, actionLabel;
   final VoidCallback? onAction;
+  final IconData actionIcon;
   final String? shortcutHint;
 
   @override
@@ -267,7 +269,7 @@ class XuEmptyState extends StatelessWidget {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onAction,
-              icon: const Icon(Icons.add),
+              icon: Icon(actionIcon),
               label: Text(actionLabel!),
             ),
           ],
