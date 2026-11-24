@@ -13,94 +13,116 @@ void main() {
     expect(ReportRules.warning('短', 50, 100), contains('下限'));
   });
 
+  test('prompt includes completed work and groups same project only once per section', () {
+    final day = DateTime(2026, 11, 7);
+    final tasks = [
+      {
+        'title': '修复登录',
+        'project': '桌面端',
+        'status': 'completed',
+        'completedAt': '2026-11-07T10:00:00',
+        'reportCategory': 'projectProgress',
+      },
+      {
+        'title': '检查发布',
+        'project': '桌面端',
+        'status': 'pending',
+        'scheduledFor': '2026-11-07T13:00:00',
+        'reportCategory': 'projectProgress',
+      },
+      {
+        'title': '评审方案',
+        'project': '桌面端',
+        'status': 'completed',
+        'scheduledFor': '2026-11-07T14:00:00',
+        'reportCategory': 'collaboration',
+      },
+      {
+        'title': '过期事项',
+        'status': 'pending',
+        'scheduledFor': '2026-11-06T14:00:00',
+      },
+    ];
+    final prompt = ReportRules.prompt(
+      tasks,
+      day: day,
+      supplement: '风险已记录',
+      minimum: 125,
+      maximum: 180,
+    );
+    expect(prompt, contains('修复登录'));
+    expect(prompt, contains('评审方案'));
+    expect(prompt, contains('风险已记录'));
+    expect(prompt, isNot(contains('过期事项')));
+    final progress = prompt.split('会议/方案/讨论：').last.split('明日重点待办：').first;
+    expect(progress.split('【桌面端】').length - 1, 1);
+  });
+
   test(
-    'prompt includes completed work and groups same project only once per section',
+    'tomorrow plan includes tomorrow only tasks and excludes processed ones',
     () {
-      final day = DateTime(2026, 11, 7);
+      final day = DateTime(2026, 11, 21);
       final tasks = [
-        {
-          'title': '修复登录',
-          'project': '桌面端',
-          'status': 'completed',
-          'completedAt': '2026-11-07T10:00:00',
-          'reportCategory': 'projectProgress',
-        },
-        {
-          'title': '检查发布',
-          'project': '桌面端',
-          'status': 'pending',
-          'scheduledFor': '2026-11-07T13:00:00',
-          'reportCategory': 'projectProgress',
-        },
-        {
-          'title': '评审方案',
-          'project': '桌面端',
-          'status': 'completed',
-          'scheduledFor': '2026-11-07T14:00:00',
-          'reportCategory': 'collaboration',
-        },
-        {
-          'title': '过期事项',
-          'status': 'pending',
-          'scheduledFor': '2026-11-06T14:00:00',
-        },
+        {'title': '明日计划', 'status': 'pending', 'scheduledFor': '2026-11-22'},
+        {'title': '已经取消', 'status': 'cancelled', 'scheduledFor': '2026-11-22'},
+        {'title': '已提前完成', 'status': 'completed', 'scheduledFor': '2026-11-22'},
+        {'title': '后天计划', 'status': 'pending', 'scheduledFor': '2026-11-23'},
       ];
+      final draft = ReportRules.fallback(tasks, day: day, supplement: '');
       final prompt = ReportRules.prompt(
         tasks,
         day: day,
-        supplement: '风险已记录',
+        supplement: '',
         minimum: 125,
         maximum: 180,
       );
-      expect(prompt, contains('修复登录'));
-      expect(prompt, contains('评审方案'));
-      expect(prompt, contains('风险已记录'));
-      expect(prompt, isNot(contains('过期事项')));
-      final progress = prompt.split('会议/方案/讨论：').last.split('明日重点待办：').first;
-      expect(progress.split('【桌面端】').length - 1, 1);
+      for (final report in [draft, prompt]) {
+        final plan = report.split('3. 明日重点事项规划').last;
+        expect(plan, contains('明日计划'));
+        expect(plan, isNot(contains('已经取消')));
+        expect(plan, isNot(contains('已提前完成')));
+        expect(plan, isNot(contains('后天计划')));
+      }
     },
   );
 
-  test(
-    'blueprint name fills missing project and short drafts get factual fallback',
-    () {
-      final day = DateTime(2026, 11, 7);
-      final tasks = [
-        {
-          'id': 't1',
-          'title': '检查界面',
-          'blueprintID': 'b1',
-          'status': 'completed',
-          'completedAt': '2026-11-07T10:00:00',
-          'quadrant': 1,
-          'estimatedMinutes': 30,
-        },
-      ];
-      final blueprints = [
-        <String, dynamic>{'id': 'b1', 'name': '桌面版'},
-      ];
-      final prompt = ReportRules.prompt(
-        tasks,
-        day: day,
-        supplement: '',
-        minimum: 125,
-        maximum: 180,
-        blueprints: blueprints,
-      );
-      expect(prompt, contains('【桌面版】'));
-      expect(prompt, contains('预计30分钟'));
-      final fallback = ReportRules.fallback(
-        tasks,
-        day: day,
-        supplement: '',
-        blueprints: blueprints,
-      );
-      expect(fallback, contains('【桌面版】'));
-      expect(fallback, contains('检查界面'));
-      expect(fallback, contains('当前没有未完成事项'));
-      final report = ReportRules.enforceMinimumLength('太短', fallback, 180);
-      expect(ReportRules.length(report), greaterThanOrEqualTo(180));
-      expect(report, contains('3. 明日重点事项规划'));
-    },
-  );
+  test('blueprint name fills missing project and short drafts get factual fallback', () {
+    final day = DateTime(2026, 11, 7);
+    final tasks = [
+      {
+        'id': 't1',
+        'title': '检查界面',
+        'blueprintID': 'b1',
+        'status': 'completed',
+        'completedAt': '2026-11-07T10:00:00',
+        'quadrant': 1,
+        'estimatedMinutes': 30,
+      },
+    ];
+    final blueprints = [
+      <String, dynamic>{'id': 'b1', 'name': '桌面版'},
+    ];
+    final prompt = ReportRules.prompt(
+      tasks,
+      day: day,
+      supplement: '',
+      minimum: 125,
+      maximum: 180,
+      blueprints: blueprints,
+    );
+    expect(prompt, contains('【桌面版】'));
+    expect(prompt, contains('预计30分钟'));
+    final fallback = ReportRules.fallback(
+      tasks,
+      day: day,
+      supplement: '',
+      blueprints: blueprints,
+    );
+    expect(fallback, contains('【桌面版】'));
+    expect(fallback, contains('检查界面'));
+    expect(fallback, contains('当前没有未完成事项'));
+    final report = ReportRules.enforceMinimumLength('太短', fallback, 180);
+    expect(ReportRules.length(report), greaterThanOrEqualTo(180));
+    expect(report, contains('3. 明日重点事项规划'));
+  });
 }

@@ -7,7 +7,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -17,11 +17,16 @@ jobs:
   package:
     name: Build macOS package
     runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate release version
         if: github.event_name == 'push'
@@ -34,6 +39,10 @@ jobs:
             echo "Tag ${RELEASE_TAG} does not match app version ${APP_VERSION}."
             exit 1
           fi
+
+      - uses: ./.github/actions/setup-flutter
+        with:
+          scaffold-token: ${{ secrets.IFA_FLUTTER_SCAFFOLD_TOKEN }}
 
       - name: Configure Developer ID signing and notarization
         env:
@@ -70,21 +79,10 @@ jobs:
           echo "NOTARY_KEY_ID=$APPLE_NOTARY_KEY_ID" >> "$GITHUB_ENV"
           echo "NOTARY_ISSUER_ID=$APPLE_NOTARY_ISSUER_ID" >> "$GITHUB_ENV"
 
-      - name: Set up Flutter 3.47.9
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.47.9'
-          channel: stable
-
-      - name: Install FVM
-        run: |
-          dart pub global activate fvm
-          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
-
       - name: Build universal DMG
         env:
           RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && format('verify-{0}', github.run_id) || github.ref_name }}
-        run: zsh scripts/package-macos.sh
+        run: zsh scripts/package-macos.sh --no-pub
 
       - name: Verify Developer ID and notarized DMG
         env:
@@ -138,3 +136,8 @@ jobs:
             security delete-keychain "$RUNNER_TEMP/xu-signing.keychain-db"
           fi
           rm -f "$RUNNER_TEMP/xu-developer-id.p12" "$RUNNER_TEMP/xu-notary-key.p8"
+
+  mobile:
+    uses: ./.github/workflows/mobile.yml
+    secrets:
+      scaffold_token: ${{ secrets.IFA_FLUTTER_SCAFFOLD_TOKEN }}

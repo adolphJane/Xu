@@ -41,7 +41,31 @@ class ReportRules {
     return tasks.where((task) {
       return sameDay(task['scheduledFor']) ||
           sameDay(task['completedAt']) ||
-          sameDay(task['statusChangedAt']);
+          sameDay(task['statusChangedAt']) ||
+          (task['postponements'] as List? ?? []).any(
+            (event) => event is Map && sameDay(event['changedAt']),
+          );
+    }).toList();
+  }
+
+  static List<Map<String, dynamic>> _nextActions(
+    List<Map<String, dynamic>> tasks,
+    List<Map<String, dynamic>> today,
+    DateTime day,
+  ) {
+    final tomorrow = DateTime(day.year, day.month, day.day + 1);
+    final relevant = today.toSet();
+    return tasks.where((task) {
+      if (['completed', 'cancelled', 'unscheduled'].contains(task['status'])) {
+        return false;
+      }
+      final scheduled = DateTime.tryParse('${task['scheduledFor']}')?.toLocal();
+      final date = scheduled == null
+          ? null
+          : DateTime(scheduled.year, scheduled.month, scheduled.day);
+      return date == tomorrow ||
+          (relevant.contains(task) &&
+              (date == null || date.isBefore(tomorrow)));
     }).toList();
   }
 
@@ -64,10 +88,7 @@ class ReportRules {
       relevant.where((task) => task['reportCategory'] == 'collaboration'),
     );
     final pending = _group(
-      relevant.where(
-        (task) =>
-            task['status'] != 'completed' && task['status'] != 'cancelled',
-      ),
+      _withBlueprintProjects(_nextActions(tasks, relevant, day), blueprints),
     );
     final date =
         '${day.year}年${day.month.toString().padLeft(2, '0')}月${day.day.toString().padLeft(2, '0')}日';
@@ -111,10 +132,7 @@ ${supplement.trim().isEmpty ? '无' : supplement.trim()}''';
       relevant.where((task) => task['reportCategory'] == 'collaboration'),
     );
     final pending = _group(
-      relevant.where(
-        (task) =>
-            task['status'] != 'completed' && task['status'] != 'cancelled',
-      ),
+      _withBlueprintProjects(_nextActions(tasks, relevant, day), blueprints),
     );
     final context = supplement.trim();
     return '''1. 项目/测试/开发进度

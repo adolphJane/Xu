@@ -4,7 +4,55 @@ import Security
 import UserNotifications
 import EventKit
 
-class MainFlutterWindow: NSWindow {
+class MainFlutterWindow: NSWindow, NSDraggingDestination {
+  private var blueprintDropTarget: String?
+  private var workspaceChannel: FlutterMethodChannel?
+
+  func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    guard blueprintDropTarget != nil else { return [] }
+    return sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self],
+        options: [.urlReadingFileURLsOnly: true]) ? .copy : []
+  }
+
+  func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    guard let target = blueprintDropTarget,
+          let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else { return false }
+    var files: [[String: Any]] = []
+    var errors: [String] = []
+    var totalBytes = 0
+    for url in urls {
+      let name = url.lastPathComponent
+      guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else {
+        errors.append("\(name)：请选择 PNG 或 JPEG 图片")
+        continue
+      }
+      let access = url.startAccessingSecurityScopedResource()
+      defer { if access { url.stopAccessingSecurityScopedResource() } }
+      do {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true, let size = values.fileSize,
+              size <= 4 * 1024 * 1024, totalBytes + size <= 24 * 1024 * 1024 else {
+          errors.append("\(name)：图片大小超出限制")
+          continue
+        }
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        guard data.count <= 4 * 1024 * 1024, totalBytes + data.count <= 24 * 1024 * 1024 else {
+          errors.append("\(name)：图片大小超出限制")
+          continue
+        }
+        totalBytes += data.count
+        files.append(["name": name, "bytes": FlutterStandardTypedData(bytes: data)])
+      } catch {
+        errors.append("\(name)：无法读取图片")
+      }
+    }
+    workspaceChannel?.invokeMethod("blueprintImageDrop", arguments: [
+      "target": target, "files": files, "errors": errors
+    ])
+    return true
+  }
+
   private let eventStore = EKEventStore()
   private var syncFolderAccess: URL?
   override func awakeFromNib() {
@@ -17,9 +65,32 @@ class MainFlutterWindow: NSWindow {
     setFrame(windowFrame, display: true)
     minSize = NSSize(width: 900, height: 620)
     let channel = FlutterMethodChannel(name: "com.xu.sequence/native", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    workspaceChannel = channel
     AppDelegate.nativeChannel = channel
     channel.setMethodCallHandler { call, result in
       switch call.method {
+      case "setBlueprintImageDropTarget":
+        if let args = call.arguments as? [String: Any], let target = args["target"] as? String {
+          if args["enabled"] as? Bool == true {
+            self.blueprintDropTarget = target
+            self.registerForDraggedTypes([.fileURL])
+          } else if self.blueprintDropTarget == target {
+            self.blueprintDropTarget = nil
+            self.unregisterDraggedTypes()
+          }
+        }
+        result(nil)
+      case "readClipboardImage":
+        let clipboard = NSPasteboard.general
+        if let data = clipboard.data(forType: .png) {
+          result(FlutterStandardTypedData(bytes: data))
+        } else if let data = clipboard.data(forType: .tiff),
+                  let bitmap = NSBitmapImageRep(data: data),
+                  let png = bitmap.representation(using: .png, properties: [:]) {
+          result(FlutterStandardTypedData(bytes: png))
+        } else {
+          result(nil)
+        }
       case "appVersion":
         result(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0")
       case "openReleasePage":

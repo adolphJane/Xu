@@ -5,11 +5,13 @@ PROJECT_DIR="${SCRIPT_DIR:h}"
 REPO_DIR="${PROJECT_DIR:h}"
 CONFIGURATION="debug"
 UNIVERSAL=false
+RESOLVE_PACKAGES=true
 OUTPUT_APP="${REPO_DIR}/dist/序.app"
 while (( $# > 0 )); do
   case "$1" in
     --release) CONFIGURATION="release" ;;
     --universal) UNIVERSAL=true ;;
+    --no-pub) RESOLVE_PACKAGES=false ;;
     --output) shift; OUTPUT_APP="$1" ;;
     *) print -u2 "未知参数：$1"; exit 1 ;;
   esac
@@ -18,8 +20,10 @@ done
 cd "${PROJECT_DIR}"
 APP_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${PROJECT_DIR}/Packaging/Info.plist")"
 BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "${PROJECT_DIR}/Packaging/Info.plist")"
-fvm flutter pub get
-fvm flutter build macos --${CONFIGURATION} --build-name "${APP_VERSION}" --build-number "${BUILD_NUMBER}"
+if [[ "${RESOLVE_PACKAGES}" == true ]]; then
+  fvm flutter pub get
+fi
+fvm flutter build macos --${CONFIGURATION} --no-pub --build-name "${APP_VERSION}" --build-number "${BUILD_NUMBER}"
 SOURCE_APP="${PROJECT_DIR}/build/macos/Build/Products/${CONFIGURATION:u}/序.app"
 [[ -d "${SOURCE_APP}" ]] || { print -u2 "Flutter 构建产物不存在：${SOURCE_APP}"; exit 1; }
 if [[ "${UNIVERSAL}" == true ]]; then

@@ -1,0 +1,80 @@
+name: Build Flutter mobile apps
+
+on:
+  workflow_call:
+    secrets:
+      scaffold_token:
+        description: Read-only credential for the Flutter scaffold repository
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  ios:
+    name: Build iOS apps
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-flutter
+        with:
+          scaffold-token: ${{ secrets.scaffold_token }}
+
+      - name: Build and package iOS apps
+        working-directory: flutter
+        run: |
+          mkdir -p ../dist
+          fvm flutter build ios --release --no-codesign --no-pub
+          ditto -c -k --keepParent build/ios/iphoneos/Runner.app ../dist/Xu-iOS-device-unsigned.zip
+          fvm flutter build ios --simulator --debug --no-pub
+          ditto -c -k --keepParent build/ios/iphonesimulator/Runner.app ../dist/Xu-iOS-simulator.zip
+
+      - name: Upload iOS builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-iOS
+          path: dist/Xu-iOS-*.zip
+          if-no-files-found: error
+
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-flutter
+        with:
+          scaffold-token: ${{ secrets.scaffold_token }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android SDK components
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            'platforms;android-35' 'platforms;android-36' 'build-tools;36.0.0' \
+            'ndk;28.2.13676358' 'cmake;3.22.1'
+
+      - name: Build and verify Android debug APK
+        working-directory: flutter
+        run: |
+          fvm flutter build apk --debug --no-pub --target-platform android-arm,android-arm64,android-x64
+          mkdir -p ../dist
+          cp build/app/outputs/flutter-apk/app-debug.apk ../dist/Xu-Android-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify ../dist/Xu-Android-debug.apk
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xu-Android
+          path: dist/Xu-Android-debug.apk
+          if-no-files-found: error

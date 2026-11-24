@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'calendar_plan_logic.dart';
+
 class ReplanChange {
   final String taskId;
   final DateTime scheduledFor;
@@ -133,7 +135,7 @@ List<Map<String, dynamic>> applyReplanToTasks(
     if (change == null ||
         row['blueprintID'] != blueprintId ||
         ['completed', 'cancelled', 'unscheduled'].contains(row['status']) ||
-        row['isPlanLocked'] == true) {
+        CalendarPlanLogic.isLocked(row)) {
       continue;
     }
     row['originalScheduledFor'] ??= row['scheduledFor'];
@@ -174,6 +176,10 @@ List<Map<String, dynamic>> applyReplanToTasks(
       }
     }
     if (!adjusted) break;
+  }
+  for (final id in changedIds) {
+    final row = byId[id]!;
+    CalendarPlanLogic.reschedule(row, DateTime.parse('${row['scheduledFor']}'));
   }
   return result;
 }

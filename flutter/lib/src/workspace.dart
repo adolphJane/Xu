@@ -16,6 +16,13 @@ import 'report_rules.dart';
 import 'weekly_review_rules.dart';
 import 'ai_blueprint.dart';
 import 'calendar_links.dart';
+import 'calendar_plan_logic.dart';
+
+import 'blueprint_graph.dart';
+import 'blueprint_image_data.dart';
+import 'blueprint_planning.dart';
+
+part 'blueprint_workspace.dart';
 
 String newId() => '${DateTime.now().microsecondsSinceEpoch}-${_counter++}';
 int _counter = 0;
@@ -36,6 +43,7 @@ class WorkspaceRepository extends BaseRepository {
     'planChanges',
     'settings',
     'categories',
+    'blueprintTemplates',
   ];
   Future<void> init() async {
     final dir = Directory(
@@ -109,23 +117,38 @@ class WorkspaceRepository extends BaseRepository {
         .writeAsString(const JsonEncoder.withIndent('  ').convert(snapshot()));
   }
 
-  Future<void> importFrom(String path) async {
-    final parsed =
-        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>;
-    final previous = snapshot();
-    load(parsed);
-    try {
-      await save();
-    } catch (_) {
-      load(previous);
-      rethrow;
-    }
-  }
-
   Future<SyncConflict?> syncFolder(String path, {SyncChoice? choice}) async {
-    final folder = Directory(path);
-    if (!await folder.exists()) throw const FileSystemException('同步文件夹不存在');
-    final remote = File('${folder.path}/xu-workspace-v1.json');
+    final documentFolder =
+        path.startsWith('content://') || path.startsWith('file://');
+    final folder = documentFolder ? null : Directory(path);
+    if (folder != null && !await folder.exists()) {
+      throw const FileSystemException('同步文件夹不存在');
+    }
+    final folderKey = folder?.absolute.path ?? path;
+    final remote = folder == null
+        ? null
+        : File('${folder.path}/xu-workspace-v1.json');
+    final recovery = folder == null
+        ? null
+        : File('${folder.path}/xu-workspace-v1.recovery.json');
+    final previous = remote == null
+        ? await NativeBridge.readSyncDocument(path)
+        : await remote.exists()
+        ? await remote.readAsString()
+        : recovery != null && await recovery.exists()
+        ? await recovery.readAsString()
+        : null;
+    Future<void> write(Map<String, dynamic> envelope) async {
+      final content = jsonEncode(envelope);
+      if (remote == null) {
+        await NativeBridge.writeSyncDocument(path, content, previous: previous);
+        return;
+      }
+      final temp = File('${remote.path}.tmp');
+      await temp.writeAsString(content, flush: true);
+      await temp.rename(remote.path);
+    }
+
     final stateFile = File('${file.path}.sync');
     final state = await stateFile.exists()
         ? Map<String, dynamic>.from(
@@ -133,27 +156,23 @@ class WorkspaceRepository extends BaseRepository {
           )
         : <String, dynamic>{};
     Future<void> record(String checksum, Map<String, dynamic> common) async {
-      state[folder.absolute.path] = {'checksum': checksum, 'snapshot': common};
+      state[folderKey] = {'checksum': checksum, 'snapshot': common};
       await stateFile.writeAsString(jsonEncode(state), flush: true);
     }
 
     final local = snapshot();
     final localHash = sha256.convert(utf8.encode(jsonEncode(local))).toString();
-    if (!await remote.exists()) {
-      await remote.writeAsString(
-        jsonEncode({
-          'formatVersion': 1,
-          'revision': 1,
-          'snapshot': local,
-          'checksum': localHash,
-        }),
-        flush: true,
-      );
+    if (previous == null) {
+      await write({
+        'formatVersion': 1,
+        'revision': 1,
+        'snapshot': local,
+        'checksum': localHash,
+      });
       await record(localHash, local);
       return null;
     }
-    final envelope =
-        jsonDecode(await remote.readAsString()) as Map<String, dynamic>;
+    final envelope = jsonDecode(previous) as Map<String, dynamic>;
     final remoteSnapshot = Map<String, dynamic>.from(
       envelope['snapshot'] as Map,
     );
@@ -167,7 +186,7 @@ class WorkspaceRepository extends BaseRepository {
       await record(localHash, local);
       return null;
     }
-    final savedBase = state[folder.absolute.path];
+    final savedBase = state[folderKey];
     final baseHash = savedBase is Map ? savedBase['checksum'] : savedBase;
     final baseSnapshot = savedBase is Map && savedBase['snapshot'] is Map
         ? Map<String, dynamic>.from(savedBase['snapshot'] as Map)
@@ -192,17 +211,12 @@ class WorkspaceRepository extends BaseRepository {
           : local;
       if (choice == SyncChoice.merge) await importSnapshot(next);
       final hash = sha256.convert(utf8.encode(jsonEncode(next))).toString();
-      final temp = File('${remote.path}.tmp');
-      await temp.writeAsString(
-        jsonEncode({
-          'formatVersion': 1,
-          'revision': (envelope['revision'] as int? ?? 0) + 1,
-          'snapshot': next,
-          'checksum': hash,
-        }),
-        flush: true,
-      );
-      await temp.rename(remote.path);
+      await write({
+        'formatVersion': 1,
+        'revision': (envelope['revision'] as int? ?? 0) + 1,
+        'snapshot': next,
+        'checksum': hash,
+      });
       await record(hash, next);
     }
     return null;
@@ -278,6 +292,15 @@ Map<String, dynamic> mergeSnapshotsWithBase(
   return result;
 }
 
+bool _sameValue(Object? a, Object? b) => jsonEncode(a) == jsonEncode(b);
+
+class _WorkspaceChange {
+  const _WorkspaceChange(this.before, this.after);
+
+  final Map<String, dynamic> before;
+  final Map<String, dynamic> after;
+}
+
 class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   final selectedTaskIds = <String>{}.obs;
   Timer? _syncTimer;
@@ -291,8 +314,19 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   final revision = 0.obs;
   final undoCount = 0.obs;
   final redoCount = 0.obs;
-  final _undo = <Map<String, dynamic>>[];
-  final _redo = <Map<String, dynamic>>[];
+  Future<void> _writeQueue = Future.value();
+  final _undo = <_WorkspaceChange>[];
+  final _redo = <_WorkspaceChange>[];
+
+  Future<T> _write<T>(Future<T> Function() action) {
+    final result = _writeQueue.then((_) => action());
+    _writeQueue = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
   Map<String, dynamic> _copySnapshot() => Map<String, dynamic>.from(
     jsonDecode(jsonEncode(repository.snapshot())) as Map,
   );
@@ -307,7 +341,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
         ) as Map,
       );
   void _record(Map<String, dynamic> previous) {
-    _undo.add(previous);
+    _undo.add(_WorkspaceChange(previous, _copySnapshot()));
     if (_undo.length > 50) _undo.removeAt(0);
     _redo.clear();
     undoCount.value = _undo.length;
@@ -321,12 +355,55 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     redoCount.value = 0;
   }
 
-  Future<void> undo() async {
-    if (_undo.isEmpty) return;
-    final current = _copySnapshot();
-    await repository.importSnapshot(_undo.last);
-    _undo.removeLast();
-    _redo.add(current);
+  Future<void> undo() => _write(() => _applyHistory(_undo, _redo, undo: true));
+
+  Future<void> redo() => _write(() => _applyHistory(_redo, _undo, undo: false));
+
+  Future<void> _applyHistory(
+    List<_WorkspaceChange> source,
+    List<_WorkspaceChange> destination, {
+    required bool undo,
+  }) async {
+    if (source.isEmpty) return;
+    final change = source.last;
+    final expected = undo ? change.after : change.before;
+    final replacement = undo ? change.before : change.after;
+    final next = _editableWorkspace();
+    for (final section in next.keys) {
+      final oldRows = (expected[section] as List).cast<Map<String, dynamic>>();
+      final newRows = (replacement[section] as List)
+          .cast<Map<String, dynamic>>();
+      final oldById = {for (final row in oldRows) row['id']: row};
+      final newById = {for (final row in newRows) row['id']: row};
+      final changedIds = {
+        ...oldById.keys,
+        ...newById.keys,
+      }.where((id) => !_sameValue(oldById[id], newById[id])).toSet();
+      final rows = next[section]!;
+      final current = {for (final row in rows) row['id']: row};
+      for (final id in changedIds) {
+        if (!_sameValue(current[id], oldById[id])) {
+          throw StateError('相关记录已修改，无法安全${undo ? '撤销' : '重做'}');
+        }
+      }
+      rows.removeWhere(
+        (row) =>
+            changedIds.contains(row['id']) && !newById.containsKey(row['id']),
+      );
+      for (var i = 0; i < newRows.length; i++) {
+        final row = newRows[i];
+        if (!changedIds.contains(row['id'])) continue;
+        final index = rows.indexWhere((current) => current['id'] == row['id']);
+        if (index < 0) {
+          rows.insert(i.clamp(0, rows.length), row);
+        } else {
+          rows[index] = row;
+        }
+      }
+    }
+    await repository.commit(next);
+    source.removeLast();
+    destination.add(change);
     undoCount.value = _undo.length;
     redoCount.value = _redo.length;
     revision.value++;
@@ -334,18 +411,12 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     await syncCalendar();
   }
 
-  Future<void> redo() async {
-    if (_redo.isEmpty) return;
-    final current = _copySnapshot();
-    await repository.importSnapshot(_redo.last);
-    _redo.removeLast();
-    _undo.add(current);
-    undoCount.value = _undo.length;
-    redoCount.value = _redo.length;
-    revision.value++;
-    await updateMenu();
-    await syncCalendar();
-  }
+  Map<String, List<Map<String, dynamic>>> _editableWorkspace() => {
+    for (final entry in repository.data.entries)
+      entry.key: entry.value
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList(),
+  };
 
   final section = 'today'.obs;
   final search = ''.obs;
@@ -393,14 +464,14 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
 
   Future<void> restoreSyncFolder() async {
     final bookmarkFile = File('${repository.file.path}.bookmark');
-    if (!await bookmarkFile.exists()) return;
     try {
+      if (!await bookmarkFile.exists()) return;
       final bookmark = await bookmarkFile.readAsString();
       syncFolderPath.value =
           await NativeBridge.restoreSyncFolder(bookmark) ?? '';
       if (syncFolderPath.value.isEmpty) throw StateError('同步文件夹不可用');
       _startAutoSync();
-      await autoSync();
+      unawaited(autoSync());
     } catch (error) {
       syncFolderPath.value = '';
       syncStatus.value = '自动同步暂停：$error';
@@ -441,27 +512,27 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     }
   }
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    themeMode.value = mode;
-    await put('settings', {
+  Future<void> setThemeMode(ThemeMode mode) => _write(() async {
+    await _put('settings', {
       ...?items('settings').where((e) => e['id'] == 'preferences').firstOrNull,
       'id': 'preferences',
       'themeMode': mode.name,
     });
-  }
+    themeMode.value = mode;
+  });
 
-  Future<void> setDailyReview(bool enabled, int hour) async {
+  Future<void> setDailyReview(bool enabled, int hour) => _write(() async {
     final result = await NativeBridge.dailyReviewNotification(enabled, hour);
     if (enabled && result != true) throw StateError('通知权限未获批准');
-    dailyReviewEnabled.value = enabled;
-    dailyReviewHour.value = hour;
-    await put('settings', {
+    await _put('settings', {
       ...?items('settings').where((e) => e['id'] == 'preferences').firstOrNull,
       'id': 'preferences',
       'dailyReviewEnabled': enabled,
       'dailyReviewHour': hour,
     });
-  }
+    dailyReviewEnabled.value = enabled;
+    dailyReviewHour.value = hour;
+  });
 
   Future<void> refreshAnniversaryNotifications() async {
     for (final item in items(
@@ -506,7 +577,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
   Future<void> createAnniversaryPreparation(
     String id,
     DateTime occurrence,
-  ) async {
+  ) => _write(() async {
     final anniversary = items('anniversaries')
         .where((row) => '${row['id']}' == id)
         .firstOrNull;
@@ -543,12 +614,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       'blueprintID': blueprintId,
     };
     final previous = _copySnapshot();
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     next['tasks']!.add(task);
     final warning = TaskRules.validate(
       task,
@@ -564,9 +630,93 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     _record(previous);
     revision.value++;
     await updateMenu();
+  });
+
+  void _validatePlanLinks(
+    String section,
+    Map<String, dynamic> row,
+    Map<String, List<Map<String, dynamic>>> workspace,
+  ) {
+    if (!['tasks', 'stages', 'milestones'].contains(section)) return;
+    final blueprint = row['blueprintID'];
+    if (blueprint != null &&
+        !workspace['blueprints']!.any((item) => item['id'] == blueprint)) {
+      throw StateError('所属蓝图已不存在');
+    }
+    final stage = row['stageID'];
+    if (stage != null &&
+        !workspace['stages']!.any(
+          (item) => item['id'] == stage && item['blueprintID'] == blueprint,
+        )) {
+      throw StateError('阶段必须属于同一蓝图');
+    }
+    final milestone = row['milestoneID'];
+    if (milestone != null &&
+        !workspace['milestones']!.any(
+          (item) =>
+              item['id'] == milestone &&
+              item['blueprintID'] == blueprint &&
+              item['stageID'] == stage,
+        )) {
+      throw StateError('里程碑必须属于所选阶段');
+    }
   }
 
-  Future<void> put(String key, Map<String, dynamic> item) async {
+  List<Map<String, dynamic>> milestoneTasks(Object? id) =>
+      _milestoneTasks(tasks, id);
+
+  List<Map<String, dynamic>> _milestoneTasks(
+    List<Map<String, dynamic>> rows,
+    Object? id,
+  ) => rows
+      .where((row) => row['milestoneID'] == id && row['status'] != 'cancelled')
+      .toList();
+
+  void _refreshMilestones(Map<String, List<Map<String, dynamic>>> workspace) {
+    final tasks = workspace['tasks']!;
+    for (final milestone in workspace['milestones']!) {
+      final linked = _milestoneTasks(tasks, milestone['id']);
+      final checks = milestone['acceptanceChecks'] as List? ?? [];
+      if (checks.isNotEmpty) {
+        final tasksDone = linked.every((row) => row['status'] == 'completed');
+        final checksDone = checks.every(
+          (row) => row is Map && row['done'] == true,
+        );
+        if (!tasksDone || !checksDone) milestone['acceptedAt'] = null;
+        milestone['isCompleted'] =
+            tasksDone && checksDone && milestone['acceptedAt'] != null;
+        milestone['acceptanceStatus'] = tasksDone ? 'ready' : 'waiting';
+        milestone['completionFromTasks'] = true;
+      } else if (linked.isNotEmpty) {
+        milestone.remove('acceptanceStatus');
+        milestone['isCompleted'] = linked.every(
+          (row) => row['status'] == 'completed',
+        );
+        milestone['completionFromTasks'] = true;
+      } else if (milestone.remove('completionFromTasks') == true) {
+        milestone.remove('acceptanceStatus');
+        milestone['isCompleted'] = false;
+      }
+    }
+  }
+
+  Future<void> setMilestoneCompleted(Object? id, bool completed) =>
+      _write(() async {
+        final milestone = items('milestones').firstWhere(
+          (row) => row['id'] == id,
+          orElse: () => throw StateError('里程碑已不存在'),
+        );
+        if ((milestone['acceptanceChecks'] as List? ?? []).isNotEmpty) {
+          throw StateError('请通过检查项验收此里程碑');
+        }
+        if (milestoneTasks(id).isNotEmpty) throw StateError('此里程碑的完成状态由关联事项决定');
+        await _put('milestones', {...milestone, 'isCompleted': completed});
+      });
+
+  Future<void> put(String key, Map<String, dynamic> item) =>
+      _write(() => _put(key, item));
+
+  Future<void> _put(String key, Map<String, dynamic> item) async {
     final previous = _copySnapshot();
     final previouslySynced =
         key == 'tasks' &&
@@ -609,25 +759,53 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
         throw StateError('纪念日通知权限未获批准');
       }
     }
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     final list = next[key]!;
     final index = list.indexWhere((e) => e['id'] == item['id']);
+    final existing = index < 0 ? null : list[index];
+    _validatePlanLinks(key, item, next);
     if (index < 0) {
       list.add(item);
     } else {
       list[index] = item;
     }
-    if (key == 'tasks') {
-      final error = TaskRules.validate(item, list, next['blueprints']!);
-      if (error != null) throw StateError(error);
+    if (key == 'milestones' && item['stageID'] != existing?['stageID']) {
+      for (final task in next['tasks']!.where(
+        (row) => row['milestoneID'] == item['id'],
+      )) {
+        task['stageID'] = item['stageID'];
+      }
     }
+    if (key == 'tasks') {
+      final blueprintId = item['blueprintID'];
+      if (blueprintId != null &&
+          (existing == null ||
+              !_sameValue(item['dependencyIDs'], existing['dependencyIDs']) ||
+              item['parentTaskID'] != existing['parentTaskID'] ||
+              blueprintId != existing['blueprintID'])) {
+        final graph = BlueprintGraph(
+          _requireTask(blueprintId, next['blueprints']!),
+          list.where((row) => row['blueprintID'] == blueprintId),
+        );
+        if (graph.issues[item['id']] case final reason?) {
+          throw StateError(reason);
+        }
+      }
+      if (item['status'] != existing?['status'] ||
+          item['parentTaskID'] != existing?['parentTaskID']) {
+        _reconcileTaskStatuses(list, next['blueprints']!, {
+          item['id'],
+        }, DateTime.now());
+      } else {
+        final error = TaskRules.validate(item, list, next['blueprints']!);
+        if (error != null) throw StateError(error);
+      }
+    }
+    if (key == 'tasks' || key == 'milestones') _refreshMilestones(next);
     await repository.commit(next);
-    if (key == 'tasks') _record(previous);
+    if (['tasks', 'blueprints', 'stages', 'milestones'].contains(key)) {
+      _record(previous);
+    }
     revision.value++;
     if (key == 'tasks' || key == 'anniversaries') await updateMenu();
     if (key == 'tasks' &&
@@ -636,16 +814,11 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     }
   }
 
-  Future<void> remove(String key, String id) async {
+  Future<void> remove(String key, String id) => _write(() async {
     final previous = _copySnapshot();
     final hadCalendarTasks = items('tasks')
         .any((task) => task['calendarAutoSync'] == true);
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     if (key == 'tasks') {
       final removed = {id, ...TaskRules.descendants(id, next['tasks']!)};
       final successors = next['tasks']!.where(
@@ -663,14 +836,30 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       next['milestones']!.removeWhere((e) => e['blueprintID'] == id);
       next[key]!.removeWhere((e) => e['id'] == id);
     } else if (key == 'stages') {
-      next['tasks']!.removeWhere((e) => e['stageID'] == id);
-      next['milestones']!.removeWhere((e) => e['stageID'] == id);
+      for (final task in next['tasks']!.where((row) => row['stageID'] == id)) {
+        task['stageID'] = null;
+      }
+      for (final milestone in next['milestones']!.where(
+        (row) => row['stageID'] == id,
+      )) {
+        milestone['stageID'] = null;
+      }
+      next[key]!.removeWhere((e) => e['id'] == id);
+    } else if (key == 'milestones') {
+      for (final task in next['tasks']!.where(
+        (row) => row['milestoneID'] == id,
+      )) {
+        task['milestoneID'] = null;
+      }
       next[key]!.removeWhere((e) => e['id'] == id);
     } else {
       next[key]!.removeWhere((e) => e['id'] == id);
     }
+    if (key == 'tasks') _refreshMilestones(next);
     await repository.commit(next);
-    if (key == 'tasks' || key == 'blueprints') _record(previous);
+    if (['tasks', 'blueprints', 'stages', 'milestones'].contains(key)) {
+      _record(previous);
+    }
     revision.value++;
     if (key == 'tasks' || key == 'blueprints' || key == 'anniversaries') {
       await updateMenu();
@@ -688,145 +877,280 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     if (hadCalendarTasks && ['tasks', 'blueprints', 'stages'].contains(key)) {
       await syncCalendar();
     }
-  }
+  });
 
   Future<void> setTaskStatus(
     Map<String, dynamic> task,
     String status, {
     String? reason,
-  }) async {
-    final now = DateTime.now().toIso8601String();
-    final updated = {
-      ...task,
+  }) => _write(() async {
+    final previous = _copySnapshot();
+    final next = _editableWorkspace();
+    final rows = next['tasks']!;
+    final current = _requireTask(task['id'], rows);
+    if (status == 'inProgress' || status == 'completed') {
+      final error = status == 'inProgress'
+          ? _startReason(current, rows, next['blueprints']!)
+          : TaskRules.blockingReason(current, rows, next['blueprints']!);
+      if (error != null) throw StateError(error);
+    }
+    final now = DateTime.now();
+    _setStatus(current, status, now, reason: reason);
+    _reconcileTaskStatuses(rows, next['blueprints']!, {current['id']}, now);
+    await _saveTaskChange(previous, next);
+  });
+
+  Map<String, dynamic> _requireTask(
+    Object? id,
+    List<Map<String, dynamic>> rows,
+  ) => rows.firstWhere(
+    (row) => row['id'] == id,
+    orElse: () => throw StateError('事项已不存在'),
+  );
+
+  void _setStatus(
+    Map<String, dynamic> task,
+    String status,
+    DateTime date, {
+    String? reason,
+    bool automatic = false,
+  }) {
+    final now = date.toIso8601String();
+    task.addAll({
       'status': status,
       'statusChangedAt': now,
       'completedAt': status == 'completed' ? now : null,
+      'autoCompletedAt': automatic ? now : null,
       'startedAt': status == 'inProgress'
-          ? (task['startedAt'] ?? now)
+          ? task['startedAt'] ?? now
           : task['startedAt'],
       'blockReason': status == 'blocked' ? reason : null,
-    };
-    await put('tasks', updated);
-    if (status == 'completed') {
-      var parentId = updated['parentTaskID'];
-      while (parentId != null) {
-        final parent = tasks.where((t) => t['id'] == parentId).firstOrNull;
-        if (parent == null) break;
-        final children = tasks
-            .where((t) => t['parentTaskID'] == parentId)
-            .toList();
-        if (children.isEmpty ||
-            children.any((t) => t['status'] != 'completed')) {
-          break;
-        }
-        if (TaskRules.blockingReason(parent, tasks, items('blueprints')) !=
-            null) {
-          break;
-        }
-        await put('tasks', {
-          ...parent,
-          'status': 'completed',
-          'completedAt': now,
-          'autoCompletedAt': now,
-        });
-        parentId = parent['parentTaskID'];
+    });
+  }
+
+  void _reconcileTaskStatuses(
+    List<Map<String, dynamic>> rows,
+    List<Map<String, dynamic>> blueprints,
+    Set<Object?> changed,
+    DateTime now,
+  ) {
+    final byId = {for (final row in rows) row['id']: row};
+    final explicitlyCompleted = changed
+        .where((id) => byId[id]?['status'] == 'completed')
+        .toSet();
+    final affectedParents = <Object?>{};
+    for (final id in changed) {
+      var parentId = byId[id]?['parentTaskID'];
+      final seen = <Object?>{};
+      while (byId.containsKey(parentId) && seen.add(parentId)) {
+        affectedParents.add(parentId);
+        parentId = byId[parentId]?['parentTaskID'];
       }
     }
+    // Each pass handles changes propagated from a lower level.
+    for (var pass = 0; pass < affectedParents.length; pass++) {
+      var updated = false;
+      for (final id in affectedParents) {
+        final parent = byId[id]!;
+        final children = rows.where((row) => row['parentTaskID'] == id);
+        final allCompleted = children.every(
+          (row) => row['status'] == 'completed',
+        );
+        if (allCompleted &&
+            parent['status'] != 'completed' &&
+            TaskRules.blockingReason(parent, rows, blueprints) == null) {
+          _setStatus(parent, 'completed', now, automatic: true);
+        } else if (!allCompleted &&
+            parent['status'] == 'completed' &&
+            !explicitlyCompleted.contains(id)) {
+          _setStatus(parent, 'pending', now);
+        } else {
+          continue;
+        }
+        changed.add(id);
+        updated = true;
+      }
+      if (!updated) break;
+    }
+    for (final row in rows) {
+      final id = row['id'];
+      final dependencies = row['dependencyIDs'] as List? ?? [];
+      if (!changed.contains(id) &&
+          (!['completed', 'inProgress'].contains(row['status']) ||
+              !dependencies.any(changed.contains))) {
+        continue;
+      }
+      final error = TaskRules.validate(row, rows, blueprints);
+      if (error != null) throw StateError('「${row['title'] ?? id}」：$error');
+    }
+  }
+
+  Future<void> _saveTaskChange(
+    Map<String, dynamic> previous,
+    Map<String, List<Map<String, dynamic>>> next,
+  ) async {
+    _refreshMilestones(next);
+    await repository.commit(next);
+    _record(previous);
+    revision.value++;
+    await updateMenu();
+    if ([
+      ...(previous['tasks'] as List).cast<Map>(),
+      ...next['tasks']!,
+    ].any((row) => row['calendarAutoSync'] == true)) {
+      await syncCalendar();
+    }
+  }
+
+  Future<void> arrangeToday(Map<String, dynamic> task) =>
+      _write(() => _moveTask(task, postpone: false));
+
+  Future<void> postponeTask(Map<String, dynamic> task) =>
+      _write(() => _moveTask(task, postpone: true));
+
+  Future<void> _moveTask(
+    Map<String, dynamic> task, {
+    required bool postpone,
+  }) async {
+    final previous = _copySnapshot();
+    final next = _editableWorkspace();
+    final current = _requireTask(task['id'], next['tasks']!);
+    final now = DateTime.now();
+    if (CalendarPlanLogic.isProcessed(current)) throw StateError('请先恢复事项');
+    if (CalendarPlanLogic.isLocked(current)) throw StateError('请先解除事项的固定安排');
+    if (postpone) {
+      final oldDate = CalendarPlanLogic.plannedDate(current);
+      if (oldDate == null) throw StateError('请先安排计划日期');
+      final tomorrow = CalendarPlanLogic.addDays(CalendarPlanLogic.day(now), 1);
+      if (!CalendarPlanLogic.day(oldDate).isBefore(tomorrow)) {
+        throw StateError('此事项已安排在明天或更晚');
+      }
+      current['originalScheduledFor'] ??= current['scheduledFor'];
+      final destination = DateTime(
+        tomorrow.year,
+        tomorrow.month,
+        tomorrow.day,
+        oldDate.hour,
+        oldDate.minute,
+      );
+      CalendarPlanLogic.reschedule(current, destination);
+      current['postponements'] = [
+        ...current['postponements'] as List? ?? [],
+        {
+          'from': oldDate.toIso8601String(),
+          'to': current['scheduledFor'],
+          'changedAt': now.toIso8601String(),
+        },
+      ];
+      _setStatus(current, 'postponed', now);
+    } else {
+      CalendarPlanLogic.reschedule(current, CalendarPlanLogic.day(now));
+    }
+    await _saveTaskChange(previous, next);
   }
 
   Future<void> toggleTask(Map<String, dynamic> task) => setTaskStatus(
     task,
     task['status'] == 'completed' ? 'pending' : 'completed',
   );
-  Future<void> addChild(Map<String, dynamic> parent, String title) =>
-      put('tasks', {
-        'id': newId(),
-        'title': title.trim(),
-        'notes': '',
-        'project': parent['project'],
-        'category': parent['category'],
-        'quadrant': parent['quadrant'],
-        'scheduledFor': parent['scheduledFor'],
-        'status': 'pending',
-        'blueprintID': parent['blueprintID'],
-        'stageID': parent['stageID'],
-        'parentTaskID': parent['id'],
-        'dependencyIDs': <String>[],
-      });
-  Future<void> addTaskTree(
-    String title,
-    String notes,
-    List<String> subtasks,
-  ) async {
-    final previous = _copySnapshot();
-    final parentId = newId();
-    final now = DateTime.now().toIso8601String();
-    final incoming = <Map<String, dynamic>>[
-      {
-        'id': parentId,
-        'title': title.trim(),
-        'notes': notes,
-        'status': 'pending',
-        'quadrant': 1,
-        'scheduledFor': now,
-      },
-      for (final child in subtasks)
-        {
+
+  Future<void> addChild(Map<String, dynamic> task, String title) =>
+      _write(() async {
+        final parent = _requireTask(task['id'], tasks);
+        await _put('tasks', {
           'id': newId(),
-          'title': child.trim(),
+          'title': title.trim(),
           'notes': '',
-          'status': 'pending',
-          'quadrant': 1,
-          'scheduledFor': now,
-          'parentTaskID': parentId,
-        },
-    ];
-    if (title.trim().isEmpty || subtasks.any((e) => e.trim().isEmpty)) {
-      throw const FormatException('任务标题不能为空');
-    }
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
-    next['tasks']!.insertAll(0, incoming);
-    for (final task in incoming) {
-      final error = TaskRules.validate(
-        task,
-        next['tasks']!,
-        next['blueprints']!,
-      );
-      if (error != null) throw StateError(error);
-    }
-    await repository.commit(next);
-    _record(previous);
-    revision.value++;
-    await updateMenu();
-  }
+          'project': parent['project'],
+          'category': parent['category'],
+          'quadrant': parent['quadrant'],
+          'scheduledFor': parent['scheduledFor'],
+          'status': parent['scheduledFor'] == null ? 'unscheduled' : 'pending',
+          'blueprintID': parent['blueprintID'],
+          'stageID': parent['stageID'],
+          'milestoneID': parent['milestoneID'],
+          'parentTaskID': parent['id'],
+          'dependencyIDs': <String>[],
+        });
+      });
+  Future<void> addTaskTree(String title, String notes, List<String> subtasks) =>
+      _write(() async {
+        final previous = _copySnapshot();
+        final parentId = newId();
+        final now = DateTime.now().toIso8601String();
+        final incoming = <Map<String, dynamic>>[
+          {
+            'id': parentId,
+            'title': title.trim(),
+            'notes': notes,
+            'status': 'pending',
+            'quadrant': 1,
+            'scheduledFor': now,
+          },
+          for (final child in subtasks)
+            {
+              'id': newId(),
+              'title': child.trim(),
+              'notes': '',
+              'status': 'pending',
+              'quadrant': 1,
+              'scheduledFor': now,
+              'parentTaskID': parentId,
+            },
+        ];
+        if (title.trim().isEmpty || subtasks.any((e) => e.trim().isEmpty)) {
+          throw const FormatException('任务标题不能为空');
+        }
+        final next = _editableWorkspace();
+        next['tasks']!.insertAll(0, incoming);
+        for (final task in incoming) {
+          final error = TaskRules.validate(
+            task,
+            next['tasks']!,
+            next['blueprints']!,
+          );
+          if (error != null) throw StateError(error);
+        }
+        await repository.commit(next);
+        _record(previous);
+        revision.value++;
+        await updateMenu();
+      });
 
   Future<void> linkDependency(
     Map<String, dynamic> task,
     String predecessorId,
-  ) => put('tasks', {
-    ...task,
-    'dependencyIDs': [...(task['dependencyIDs'] as List? ?? []), predecessorId],
+  ) => _write(() {
+    final current = _requireTask(task['id'], tasks);
+    return _put('tasks', {
+      ...current,
+      'dependencyIDs': [
+        ...(current['dependencyIDs'] as List? ?? []),
+        predecessorId,
+      ],
+    });
   });
-  Future<void> addCategory(String name, {String symbol = 'label'}) async {
-    final trimmed = name.trim();
-    if (trimmed.isEmpty) throw const FormatException('分类名称不能为空');
-    if (items('categories')
-        .any((e) => '${e['name']}'.toLowerCase() == trimmed.toLowerCase())) {
-      throw StateError('分类已存在');
-    }
-    await put('categories', {'id': newId(), 'name': trimmed, 'symbol': symbol});
-  }
+  Future<void> addCategory(String name, {String symbol = 'label'}) => _write(
+    () async {
+      final trimmed = name.trim();
+      if (trimmed.isEmpty) throw const FormatException('分类名称不能为空');
+      if (items('categories')
+          .any((e) => '${e['name']}'.toLowerCase() == trimmed.toLowerCase())) {
+        throw StateError('分类已存在');
+      }
+      await _put('categories', {
+        'id': newId(),
+        'name': trimmed,
+        'symbol': symbol,
+      });
+    },
+  );
 
   Future<void> renameCategory(
     String oldName,
     String newName, {
     String? symbol,
-  }) async {
+  }) => _write(() async {
     final trimmed = newName.trim();
     if (trimmed.isEmpty) throw const FormatException('分类名称不能为空');
     if (items('categories').any(
@@ -836,12 +1160,8 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     )) {
       throw StateError('分类已存在');
     }
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+    final previous = _copySnapshot();
+    final next = _editableWorkspace();
     var found = false;
     for (final row in next['categories']!) {
       if (row['name'] == oldName) {
@@ -861,39 +1181,32 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       if (task['category'] == oldName) task['category'] = trimmed;
     }
     await repository.commit(next);
+    _record(previous);
     revision.value++;
-  }
+  });
 
-  Future<void> deleteCategory(String name) async {
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+  Future<void> deleteCategory(String name) => _write(() async {
+    final previous = _copySnapshot();
+    final next = _editableWorkspace();
     next['categories']!.removeWhere((e) => e['name'] == name);
     for (final task in next['tasks']!) {
       if (task['category'] == name) task['category'] = null;
     }
     await repository.commit(next);
+    _record(previous);
     revision.value++;
-  }
+  });
 
   List<Map<String, dynamic>> get tasks => items('tasks');
   Future<void> applyCalendarChanges(
     List<Map<String, dynamic>> before,
     List<Map<String, dynamic>> after,
-  ) async {
+  ) => _write(() async {
     if (before.isEmpty || before.length != after.length) {
       throw StateError('没有可保存的日历安排');
     }
     final previous = _copySnapshot();
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     for (var i = 0; i < before.length; i++) {
       final id = '${before[i]['id']}';
       if (id != '${after[i]['id']}') throw StateError('安排的任务 ID 不一致');
@@ -919,9 +1232,14 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     if ([...before, ...after].any((row) => row['calendarAutoSync'] == true)) {
       await syncCalendar();
     }
-  }
+  });
 
-  Future<void> applyTaskBatch(String action) async {
+  Future<void> applyTaskBatch(String action) => _write(() async {
+    if (action == 'start') {
+      await _startTasks(selectedTaskIds.toSet());
+      selectedTaskIds.clear();
+      return;
+    }
     final ids = selectedTaskIds
         .where((id) => tasks.any((task) => '${task['id']}' == id))
         .toSet();
@@ -933,14 +1251,9 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       throw ArgumentError.value(action, 'action');
     }
     final previous = _copySnapshot();
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     final rows = next['tasks']!;
-    final now = DateTime.now().toIso8601String();
+    final now = DateTime.now();
     if (action == 'delete') {
       final removed = <String>{...ids};
       for (final id in ids) {
@@ -958,71 +1271,70 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     } else {
       for (final row in rows.where((row) => ids.contains('${row['id']}'))) {
         if (action == 'today') {
-          row['scheduledFor'] = now;
+          if (CalendarPlanLogic.isProcessed(row) ||
+              CalendarPlanLogic.isLocked(row)) {
+            throw StateError('选中事项已处理或固定安排');
+          }
+          CalendarPlanLogic.reschedule(row, CalendarPlanLogic.day(now));
         } else {
-          final status = action == 'complete' ? 'completed' : 'cancelled';
-          row['status'] = status;
-          row['statusChangedAt'] = now;
-          row['completedAt'] = status == 'completed' ? now : null;
+          if (action == 'complete' &&
+              ['blocked', 'cancelled'].contains(row['status'])) {
+            throw StateError('请先恢复「${row['title']}」');
+          }
+          _setStatus(
+            row,
+            action == 'complete' ? 'completed' : 'cancelled',
+            now,
+          );
         }
       }
-      for (final row in rows.where((row) => ids.contains('${row['id']}'))) {
-        final error = TaskRules.validate(row, rows, next['blueprints']!);
-        if (error != null) throw StateError(error);
+      if (action != 'today') {
+        _reconcileTaskStatuses(rows, next['blueprints']!, {...ids}, now);
       }
     }
-    await repository.commit(next);
-    _record(previous);
+    await _saveTaskChange(previous, next);
     selectedTaskIds.clear();
-    revision.value++;
-    await updateMenu();
-    if (action == 'today' || action == 'delete') await syncCalendar();
-  }
+  });
 
   List<Map<String, dynamic>> get todayTasks {
-    final now = DateTime.now();
-    return tasks.where((t) {
-      final date = DateTime.tryParse('${t['scheduledFor']}');
-      return date != null &&
-          date.year == now.year &&
-          date.month == now.month &&
-          date.day == now.day;
+    final today = CalendarPlanLogic.day(DateTime.now());
+    return tasks.where((task) {
+      final date = CalendarPlanLogic.plannedDate(task);
+      return task['status'] == 'inProgress' ||
+          (date != null && CalendarPlanLogic.day(date) == today);
     }).toList();
   }
 
-  Future<void> importWorkspace(String path) async {
-    await repository.importFrom(path);
-    _clearHistory();
-    revision.value++;
-    await updateMenu();
-    await syncCalendar();
-  }
+  Future<void> importWorkspace(Map<String, dynamic> snapshot) =>
+      _write(() async {
+        await repository.importSnapshot(snapshot);
+        _clearHistory();
+        revision.value++;
+        await updateMenu();
+        await syncCalendar();
+      });
 
   Map<String, dynamic> exportBlueprint(String id) =>
       BlueprintTransfer.export(repository.snapshot(), id);
-  Future<void> importBlueprint(Map<String, dynamic> package) async {
-    final previous = _copySnapshot();
-    final next = BlueprintTransfer.import(previous, package, newId);
-    await repository.importSnapshot(next);
-    _record(previous);
-    revision.value++;
-    await updateMenu();
-    await syncCalendar();
-  }
+  Future<void> importBlueprint(Map<String, dynamic> package) =>
+      _write(() async {
+        final previous = _copySnapshot();
+        final next = BlueprintTransfer.import(previous, package, newId);
+        await repository.importSnapshot(next);
+        _record(previous);
+        revision.value++;
+        await updateMenu();
+        await syncCalendar();
+      });
 
   Future<void> createBlueprintFromTemplate(
     BlueprintTemplate template, {
     DateTime? start,
-  }) async {
+  }) => _write(() async {
     final previous = _copySnapshot();
     final now = start ?? DateTime.now();
     final id = newId();
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     next['blueprints']!.add({
       'id': id,
       'name': template.name,
@@ -1056,19 +1368,17 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     await repository.commit(next);
     _record(previous);
     revision.value++;
-  }
+  });
 
   Future<void> createAiBlueprint(
     AiBlueprintDraft draft, {
     Set<String>? excludedTaskKeys,
-  }) async {
+    Map<String, Set<String>> dependencyOverrides = const {},
+    Map<String, String> taskTitles = const {},
+    bool chainStages = false,
+  }) => _write(() async {
     final previous = _copySnapshot();
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     final id = newId();
     final created = <String, List<Map<String, dynamic>>>{
       'blueprints': [],
@@ -1084,10 +1394,16 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       'startDate': draft.startDate.toIso8601String(),
       'dueDate': draft.dueDate.toIso8601String(),
     });
-    var predecessors = <String>[];
+    final connections = draft.dependenciesFor(
+      excluded: excludedTaskKeys ?? const {},
+      overrides: dependencyOverrides,
+      chainStages: chainStages,
+    );
+    final taskIds = {for (final key in connections.keys) key: newId()};
     for (var index = 0; index < draft.stages.length; index++) {
       final stage = draft.stages[index];
       final stageId = newId();
+      final milestoneId = newId();
       created['stages']!.add({
         'id': stageId,
         'blueprintID': id,
@@ -1097,21 +1413,21 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
         'dueDate': stage.dueDate.toIso8601String(),
       });
       created['milestones']!.add({
-        'id': newId(),
+        'id': milestoneId,
         'blueprintID': id,
         'stageID': stageId,
         'name': stage.milestone,
         'dueDate': stage.dueDate.toIso8601String(),
         'isCompleted': false,
       });
-      final current = <String>[];
       for (var taskIndex = 0; taskIndex < stage.tasks.length; taskIndex++) {
         if (excludedTaskKeys?.contains('$index:$taskIndex') == true) continue;
         final task = stage.tasks[taskIndex];
-        final taskId = newId();
+        final taskKey = '$index:$taskIndex';
+        final taskId = taskIds[taskKey]!;
         created['tasks']!.add({
           'id': taskId,
-          'title': task.title,
+          'title': taskTitles[taskKey] ?? task.title,
           'notes': task.notes,
           'project': draft.name,
           'reportCategory': 'projectProgress',
@@ -1122,11 +1438,12 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
           'status': 'pending',
           'blueprintID': id,
           'stageID': stageId,
-          'dependencyIDs': [...predecessors],
+          'milestoneID': milestoneId,
+          'dependencyIDs': connections[taskKey]!
+              .map((key) => taskIds[key]!)
+              .toList(),
         });
-        current.add(taskId);
       }
-      if (current.isNotEmpty) predecessors = current;
     }
     if (created['tasks']!.isEmpty) throw const FormatException('至少保留一项任务');
     for (final entry in created.entries) {
@@ -1140,6 +1457,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       );
       if (error != null) throw StateError(error);
     }
+    _refreshMilestones(next);
     next['planChanges']!.add({
       'id': newId(),
       'kind': 'aiBlueprint',
@@ -1154,13 +1472,13 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     _record(previous);
     revision.value++;
     await updateMenu();
-  }
+  });
 
   Future<void> commitReplan(
     String blueprintId,
     List<ReplanChange> selected, {
     required int dailyMinutes,
-  }) async {
+  }) => _write(() async {
     final previous = _copySnapshot();
     final planned = applyReplanToTasks(tasks, blueprintId, selected);
     final overloads = replanCapacityOverloads(
@@ -1171,12 +1489,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     if (overloads.isNotEmpty) {
       throw StateError(capacityOverloadMessage(overloads));
     }
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     next['tasks'] = planned;
     final historyEntries = replanHistoryEntries(tasks, planned, selected);
     for (final task in planned.where(
@@ -1211,9 +1524,9 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     revision.value++;
     await updateMenu();
     await syncCalendar();
-  }
+  });
 
-  Future<void> undoPlanChange(String changeId) async {
+  Future<void> undoPlanChange(String changeId) => _write(() async {
     final previous = _copySnapshot();
     final records = items('planChanges');
     final record = records.where((item) => item['id'] == changeId).firstOrNull;
@@ -1232,12 +1545,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
             .map((row) => Map<String, dynamic>.from(row as Map))
             .toList();
       }
-      final next = {
-        for (final entry in repository.data.entries)
-          entry.key: entry.value
-              .map((row) => Map<String, dynamic>.from(row))
-              .toList(),
-      };
+      final next = _editableWorkspace();
       for (final section in created.keys) {
         final current = {for (final row in next[section]!) '${row['id']}': row};
         for (final row in created[section]!) {
@@ -1295,12 +1603,7 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
       }
     }
     final replacement = {for (final task in before) '${task['id']}': task};
-    final next = {
-      for (final entry in repository.data.entries)
-        entry.key: entry.value
-            .map((row) => Map<String, dynamic>.from(row))
-            .toList(),
-    };
+    final next = _editableWorkspace();
     next['tasks'] = [
       for (final task in tasks) replacement['${task['id']}'] ?? task,
     ];
@@ -1322,21 +1625,23 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
     revision.value++;
     await updateMenu();
     await syncCalendar();
-  }
+  });
 
-  Future<SyncConflict?> syncFolder(String path, {SyncChoice? choice}) async {
-    final before = jsonEncode(repository.snapshot());
-    final conflict = await repository.syncFolder(path, choice: choice);
-    if (conflict == null && jsonEncode(repository.snapshot()) != before) {
-      _clearHistory();
-    }
-    revision.value++;
-    await updateMenu();
-    if (conflict == null) await syncCalendar();
-    return conflict;
-  }
+  Future<SyncConflict?> syncFolder(String path, {SyncChoice? choice}) =>
+      _write(() async {
+        final before = jsonEncode(repository.snapshot());
+        final conflict = await repository.syncFolder(path, choice: choice);
+        if (conflict == null && jsonEncode(repository.snapshot()) != before) {
+          _clearHistory();
+        }
+        revision.value++;
+        await updateMenu();
+        if (conflict == null) await syncCalendar();
+        return conflict;
+      });
 
   Future<void> updateMenu() async {
+    if (Platform.isAndroid || Platform.isIOS) return;
     final upcoming = await Future.wait(
       items('anniversaries')
           .where((row) => row['showInMenuBar'] != false)
@@ -1381,6 +1686,10 @@ class WorkspaceViewModel extends BasePageViewModel<WorkspaceRepository> {
               'id': '${t['id']}',
               'title': '${t['title'] ?? ''}',
               'status': '${t['status'] ?? 'pending'}',
+              'canStart':
+                  '${_startReason(t, tasks, items('blueprints')) == null}',
+              'canComplete':
+                  '${TaskRules.validate({...t, 'status': 'completed'}, tasks, items('blueprints')) == null && TaskRules.blockingReason(t, tasks, items('blueprints')) == null}',
               'canRun':
                   TaskRules.blockingReason(t, tasks, items('blueprints')) ==
                       null

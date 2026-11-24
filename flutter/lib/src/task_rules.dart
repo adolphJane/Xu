@@ -67,7 +67,12 @@ class TaskRules {
   ) {
     if (from == target) return true;
     if (!seen.add(from)) return false;
-    for (final id in (byId[from]?['dependencyIDs'] as List? ?? [])) {
+    final prerequisites = {
+      ...byId[from]?['dependencyIDs'] as List? ?? [],
+      for (final entry in byId.entries)
+        if (entry.value['parentTaskID'] == from) entry.key,
+    };
+    for (final id in prerequisites) {
       if (_reaches('$id', target, byId, seen)) return true;
     }
     return false;

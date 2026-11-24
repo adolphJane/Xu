@@ -1,11 +1,68 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ifa_flutter_scaffold/ifa_flutter_scaffold.dart';
+import 'package:xu/src/native.dart';
 import 'package:xu/src/workspace.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'document folder sync keeps its baseline when a write is rejected',
+    () async {
+      final root = await Directory.systemTemp.createTemp('xu-sync-document-');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      addTearDown(() async {
+        messenger.setMockMethodCallHandler(NativeBridge.channel, null);
+        await root.delete(recursive: true);
+      });
+      const folder = 'content://example.documents/tree/workspace';
+      String? remote;
+      var failWrite = false;
+      messenger.setMockMethodCallHandler(NativeBridge.channel, (call) async {
+        if (call.method == 'readSyncDocument') {
+          expect(call.arguments, folder);
+          return remote;
+        }
+        expect(call.method, 'writeSyncDocument');
+        expect(call.arguments['folder'], folder);
+        expect(call.arguments['previous'], remote);
+        if (failWrite) {
+          throw PlatformException(code: 'sync', message: '同步文件已变化');
+        }
+        remote = call.arguments['content'] as String;
+        return null;
+      });
+      final repo = WorkspaceRepository()
+        ..file = File('${root.path}/workspace.json')
+        ..load({
+          'formatVersion': 1,
+          'tasks': [
+            {'id': 'task', 'title': '初始状态'},
+          ],
+        });
+      expect(await repo.syncFolder(folder), isNull);
+      final baseline = File('${repo.file.path}.sync');
+      final before = await baseline.readAsString();
+      repo.data['tasks']!.single['title'] = '手机端更新';
+      await repo.save();
+      failWrite = true;
+      await expectLater(
+        repo.syncFolder(folder),
+        throwsA(isA<PlatformException>()),
+      );
+      expect(await baseline.readAsString(), before);
+      failWrite = false;
+      expect(await repo.syncFolder(folder), isNull);
+      expect(jsonDecode(remote!)['revision'], 2);
+      expect(jsonDecode(remote!)['snapshot']['tasks'].single['title'], '手机端更新');
+    },
+  );
+
   test(
     'folder sync pulls remote-only changes and reports divergent edits',
     () async {

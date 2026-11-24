@@ -1,7 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 class NativeBridge {
   static const channel = MethodChannel('com.xu.sequence/native');
+  static final _imageDrops = StreamController<Map>.broadcast();
+  static Stream<Map> get blueprintImageDrops => _imageDrops.stream;
+
+  static Future<void> setBlueprintImageDropTarget(
+    String target,
+    bool enabled,
+  ) async {
+    try {
+      await channel.invokeMethod<void>('setBlueprintImageDropTarget', {
+        'target': target,
+        'enabled': enabled,
+      });
+    } on MissingPluginException {
+      // The file picker remains available without a native window.
+    }
+  }
+
+  static Future<Uint8List?> readClipboardImage() =>
+      channel.invokeMethod<Uint8List>('readClipboardImage');
   static Future<String?> appVersion() =>
       channel.invokeMethod<String>('appVersion');
   static Future<bool?> openReleasePage(String url) =>
@@ -18,6 +39,17 @@ class NativeBridge {
 
   static Future<String?> restoreSyncFolder(String bookmark) =>
       channel.invokeMethod<String>('restoreSyncFolder', bookmark);
+  static Future<String?> readSyncDocument(String folder) =>
+      channel.invokeMethod<String>('readSyncDocument', folder);
+  static Future<void> writeSyncDocument(
+    String folder,
+    String content, {
+    required String? previous,
+  }) => channel.invokeMethod<void>('writeSyncDocument', {
+    'folder': folder,
+    'content': content,
+    'previous': previous,
+  });
   static Future<String?> readApiKey() =>
       channel.invokeMethod<String>('keychainRead');
   static Future<bool?> writeApiKey(String key) =>
@@ -119,6 +151,9 @@ class NativeBridge {
     required void Function() onShowSettings,
   }) {
     channel.setMethodCallHandler((call) async {
+      if (call.method == 'blueprintImageDrop' && call.arguments is Map) {
+        _imageDrops.add(call.arguments as Map);
+      }
       if (call.method == 'addTask') onAddTask();
       if (call.method == 'showAnniversaries') onShowAnniversaries();
       if (call.method == 'addCompletedTask') onAddCompletedTask();

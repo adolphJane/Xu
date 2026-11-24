@@ -49,9 +49,8 @@ void main() {
     tester,
   ) async {
     final repo = await openInbox(tester);
-    expect(find.text('CAPTURE'), findsOneWidget);
     expect(find.text('收集箱已清空'), findsOneWidget);
-    expect(find.textContaining('暂不安排日期'), findsOneWidget);
+    expect(find.text('先记下事项，稍后安排日期。'), findsOneWidget);
     await tester.tap(find.text('收集事项'));
     await tester.pumpAndSettle();
     final planSwitch = find.widgetWithText(SwitchListTile, '计划日期');

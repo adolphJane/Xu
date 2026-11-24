@@ -1,4 +1,4 @@
-name: Build macOS preview DMG
+name: Build Flutter previews
 
 on:
   push:
@@ -17,25 +17,22 @@ jobs:
   package:
     name: Package macOS preview
     runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-
-      - name: Set up Flutter 3.47.9
-        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.9'
-          channel: stable
+          persist-credentials: false
 
-      - name: Install FVM
-        run: |
-          dart pub global activate fvm
-          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup-flutter
+        with:
+          scaffold-token: ${{ secrets.IFA_FLUTTER_SCAFFOLD_TOKEN }}
 
       - name: Build universal DMG
         env:
           RELEASE_VERSION: preview-${{ github.sha }}
-        run: zsh scripts/package-unsigned.sh
+        run: zsh scripts/package-unsigned.sh --no-pub
 
       - name: Upload DMG
         uses: actions/upload-artifact@v4
@@ -44,3 +41,8 @@ jobs:
           path: dist/Xu-preview-${{ github.sha }}.dmg
           if-no-files-found: error
           retention-days: 14
+
+  mobile:
+    uses: ./.github/workflows/mobile.yml
+    secrets:
+      scaffold_token: ${{ secrets.IFA_FLUTTER_SCAFFOLD_TOKEN }}

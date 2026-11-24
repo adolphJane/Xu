@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'blueprint_graph.dart';
 import 'replan.dart';
 
 class AiBlueprintDraft {
@@ -54,6 +55,12 @@ class AiBlueprintDraft {
             (due != null && due.isBefore(planned))) {
           throw const FormatException('阶段任务标题、时长或日期无效');
         }
+        final dependencies = item['dependsOn'];
+        if (dependencies != null &&
+            (dependencies is! List ||
+                dependencies.any((value) => value is! String))) {
+          throw const FormatException('AI 草稿的前置任务 ID 无效');
+        }
         tasks.add(
           AiBlueprintTask(
             '${item['title']}'.trim(),
@@ -68,6 +75,9 @@ class AiBlueprintDraft {
               'eliminate' => 4,
               _ => throw const FormatException('任务象限无效'),
             },
+            draftId: item['id'] as String?,
+            dependencies: (dependencies as List?)?.cast<String>() ?? const [],
+            dependencyReason: '${item['dependencyReason'] ?? ''}',
           ),
         );
       }
@@ -113,6 +123,7 @@ class AiBlueprintDraft {
       last,
       stages,
     );
+    draft.dependenciesFor();
     final preview = draft.tasks
         .map(
           (task) => <String, dynamic>{
@@ -136,11 +147,69 @@ class AiBlueprintDraft {
 
   Iterable<AiBlueprintTask> get tasks => stages.expand((stage) => stage.tasks);
 
+  Map<String, AiBlueprintTask> get taskEntries => {
+    for (var stage = 0; stage < stages.length; stage++)
+      for (var task = 0; task < stages[stage].tasks.length; task++)
+        '$stage:$task': stages[stage].tasks[task],
+  };
+
+  Map<String, Set<String>> dependenciesFor({
+    Set<String> excluded = const {},
+    Map<String, Set<String>> overrides = const {},
+    bool chainStages = false,
+  }) {
+    final entries = taskEntries;
+    final byId = <String, String>{};
+    for (final entry in entries.entries) {
+      final id = entry.value.draftId ?? entry.key;
+      if (id.isEmpty || byId.containsKey(id)) {
+        throw const FormatException('AI 草稿包含重复或空任务 ID');
+      }
+      byId[id] = entry.key;
+    }
+    final selected = entries.keys
+        .where((key) => !excluded.contains(key))
+        .toSet();
+    final result = <String, Set<String>>{};
+    for (final key in selected) {
+      final task = entries[key]!;
+      final dependencies =
+          overrides[key] ??
+          {
+            for (final id in task.dependencies)
+              byId[id] ?? (throw const FormatException('AI 草稿引用了不存在的任务')),
+          };
+      result[key] = dependencies.where(selected.contains).toSet();
+    }
+    if (chainStages) {
+      var previous = <String>{};
+      for (var stage = 0; stage < stages.length; stage++) {
+        final group = selected
+            .where((key) => key.startsWith('$stage:'))
+            .toSet();
+        if (group.isEmpty) continue;
+        final intraSources = {
+          for (final key in group) ...result[key]!.where(group.contains),
+        };
+        for (final key in group) {
+          if (!result[key]!.any(group.contains)) result[key]!.addAll(previous);
+        }
+        previous = group.difference(intraSources);
+      }
+    }
+    final graph = BlueprintGraph({}, [
+      for (final entry in result.entries)
+        {'id': entry.key, 'dependencyIDs': entry.value.toList()},
+    ]);
+    if (graph.issues.isNotEmpty) throw const FormatException('AI 草稿包含循环依赖');
+    return result;
+  }
+
   static String prompt(String goal, DateTime deadline, int dailyMinutes) =>
       '''你是严谨的项目规划助手。根据目标生成可执行蓝图，只返回 JSON，不要 Markdown。
 当前日期：${DateTime.now().toIso8601String()}；截止日期：${deadline.toIso8601String()}；每日可用 $dailyMinutes 分钟。
-JSON：{"name":"", "goal":"", "startDate":"ISO8601", "dueDate":"ISO8601", "stages":[{"name":"", "startDate":"ISO8601", "dueDate":"ISO8601", "milestone":"", "tasks":[{"title":"", "scheduledFor":"ISO8601", "dueDate":null, "estimatedMinutes":30, "quadrant":"doNow|schedule|delegate|eliminate", "notes":""}]}]}
-要求 2～6 个阶段，每阶段 1～8 项任务，每日任务时长不超过容量，不编造外部事实。用户目标：$goal''';
+JSON：{"name":"", "goal":"", "startDate":"ISO8601", "dueDate":"ISO8601", "stages":[{"name":"", "startDate":"ISO8601", "dueDate":"ISO8601", "milestone":"", "tasks":[{"id":"唯一任务ID", "dependsOn":[], "dependencyReason":"", "title":"", "scheduledFor":"ISO8601", "dueDate":null, "estimatedMinutes":30, "quadrant":"doNow|schedule|delegate|eliminate", "notes":""}]}]}
+要求 2～6 个阶段，每阶段 1～8 项任务，每日任务时长不超过容量，只填写真实必要的前置任务 ID，支持并行分支和汇合，不因阶段顺序添加全组依赖。不编造外部事实。用户目标：$goal''';
 }
 
 class AiStageDraft {
@@ -165,12 +234,18 @@ class AiBlueprintTask {
   final DateTime? dueDate;
   final int estimatedMinutes;
   final int quadrant;
+  final String? draftId;
+  final List<String> dependencies;
+  final String dependencyReason;
   const AiBlueprintTask(
     this.title,
     this.notes,
     this.scheduledFor,
     this.dueDate,
     this.estimatedMinutes,
-    this.quadrant,
-  );
+    this.quadrant, {
+    this.draftId,
+    this.dependencies = const [],
+    this.dependencyReason = '',
+  });
 }

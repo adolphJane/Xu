@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 @immutable
@@ -17,7 +18,7 @@ class XuColors extends ThemeExtension<XuColors> {
   static const light = XuColors(
     canvas: Color(0xfff2f4f0),
     sidebar: Color(0xfff1f2ee),
-    topbar: Color(0xfffdfdfd),
+    topbar: Color(0xffe9eeea),
     selection: Color(0xffd9e0db),
     muted: Color(0xffedf0ec),
     secondaryText: Color(0xff6c6d6b),
@@ -26,7 +27,7 @@ class XuColors extends ThemeExtension<XuColors> {
   static const dark = XuColors(
     canvas: Color(0xff1d2422),
     sidebar: Color(0xff202925),
-    topbar: Color(0xff252e2b),
+    topbar: Color(0xff222d29),
     selection: Color(0xff304640),
     muted: Color(0xff2c3934),
     secondaryText: Color(0xffbcc8c3),
@@ -73,6 +74,7 @@ class XuColors extends ThemeExtension<XuColors> {
 class XuTheme {
   static ThemeData build(Brightness brightness) {
     final dark = brightness == Brightness.dark;
+    final mac = defaultTargetPlatform == TargetPlatform.macOS;
     final colors = dark ? XuColors.dark : XuColors.light;
     final accent = dark ? const Color(0xff8ac7b8) : const Color(0xff21504b);
     final foreground = dark ? const Color(0xfff3f6f2) : const Color(0xff1f1f1f);
@@ -96,7 +98,7 @@ class XuTheme {
       colorScheme: scheme,
       scaffoldBackgroundColor: colors.canvas,
       cardColor: scheme.surface,
-      fontFamily: '.AppleSystemUIFont',
+      fontFamily: mac ? '.AppleSystemUIFont' : null,
       extensions: [colors],
       textTheme: TextTheme(
         headlineMedium: TextStyle(
@@ -137,6 +139,31 @@ class XuTheme {
           borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: colors.border),
         ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style:
+            OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ).copyWith(
+              side: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.focused)
+                    ? BorderSide(color: accent, width: 2)
+                    : BorderSide(color: colors.border),
+              ),
+            ),
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        width: mac ? 440 : null,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       dividerTheme: DividerThemeData(color: colors.border, thickness: 1),
     );

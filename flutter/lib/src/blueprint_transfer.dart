@@ -50,6 +50,30 @@ class BlueprintTransfer {
     final map = {for (final old in ids) old: createId()};
     String? remap(dynamic value) => value == null ? null : map['$value'];
     blueprint['id'] = map[oldBlueprintId];
+    if (blueprint['planBaseline'] case final Map baseline) {
+      blueprint['planBaseline'] = {
+        ...baseline,
+        'tasks': [
+          for (final row in (baseline['tasks'] as List? ?? []).whereType<Map>())
+            if (remap(row['id']) case final id?)
+              {
+                ...row,
+                'id': id,
+                'dependencyIDs': (row['dependencyIDs'] as List? ?? [])
+                    .map(remap)
+                    .nonNulls
+                    .toList(),
+              },
+        ],
+      };
+    }
+    List<Map> remapEvidence(Object? rows, {required bool retainMissing}) => [
+      for (final entry in (rows as List? ?? []).whereType<Map>())
+        if (remap(entry['taskID']) case final id?)
+          {...entry, 'taskID': id}
+        else if (retainMissing)
+          {...entry, 'taskID': null},
+    ];
     final result = Map<String, dynamic>.from(snapshot);
     result['blueprints'] = [
       ...(snapshot['blueprints'] as List? ?? []),
@@ -66,6 +90,25 @@ class BlueprintTransfer {
             if (id == null) throw const FormatException('蓝图包含失效关联');
             row[field] = id;
           }
+        }
+        if (row['acceptanceEvidence'] is List) {
+          row['acceptanceEvidence'] = remapEvidence(
+            row['acceptanceEvidence'],
+            retainMissing: false,
+          );
+        }
+        if (row['acceptanceHistory'] is List) {
+          row['acceptanceHistory'] = [
+            for (final record
+                in (row['acceptanceHistory'] as List).whereType<Map>())
+              {
+                ...record,
+                'evidence': remapEvidence(
+                  record['evidence'],
+                  retainMissing: true,
+                ),
+              },
+          ];
         }
         if (row['dependencyIDs'] is List) {
           row['dependencyIDs'] = (row['dependencyIDs'] as List)

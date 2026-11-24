@@ -62,6 +62,23 @@ class CalendarPlanLogic {
   static DateTime? parse(dynamic value) =>
       value == null ? null : DateTime.tryParse('$value')?.toLocal();
 
+  static void reschedule(Map<String, dynamic> task, DateTime date) {
+    final localDate = date.toLocal();
+    final block = taskBlock(task);
+    if (block != null) {
+      final delta = daysBetween(localDate, block.start);
+      if (delta != 0) {
+        task['timeBlock'] = {
+          ...task['timeBlock'] as Map,
+          'start': addDays(block.start, delta).toIso8601String(),
+          'end': addDays(block.end, delta).toIso8601String(),
+        };
+      }
+    }
+    task['scheduledFor'] = localDate.toIso8601String();
+    if (task['status'] == 'unscheduled') task['status'] = 'pending';
+  }
+
   static DateTime? plannedDate(Map<String, dynamic> task) {
     if (task['status'] == 'unscheduled') return null;
     return parse(task['scheduledFor']);
@@ -82,6 +99,9 @@ class CalendarPlanLogic {
     if (start == null || end == null || !end.isAfter(start)) return null;
     return CalendarInterval(start, end);
   }
+
+  static bool isLocked(Map<String, dynamic> task) =>
+      task['isPlanLocked'] == true || task['planLocked'] == true;
 
   static bool isProcessed(Map<String, dynamic> task) =>
       task['status'] == 'completed' || task['status'] == 'cancelled';

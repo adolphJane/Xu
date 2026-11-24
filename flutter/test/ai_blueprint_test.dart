@@ -19,6 +19,33 @@ void main() {
       throwsFormatException,
     );
   });
+  test('AI relationships use task IDs and can be selectively edited', () {
+    final input = sample
+        .replaceFirst('"title":"画界面"', '"id":"design","title":"画界面"')
+        .replaceFirst(
+          '"title":"开发"',
+          '"id":"code","dependsOn":["design"],"title":"开发"',
+        );
+    final draft = AiBlueprintDraft.parse(input, 120);
+    expect(draft.dependenciesFor(), {
+      '0:0': <String>{},
+      '1:0': {'0:0'},
+    });
+    expect(draft.dependenciesFor(excluded: {'0:0'}), {'1:0': <String>{}});
+    expect(draft.dependenciesFor(overrides: {'1:0': {}})['1:0'], isEmpty);
+    expect(
+      () => draft.dependenciesFor(
+        overrides: {
+          '0:0': {'1:0'},
+        },
+      ),
+      throwsFormatException,
+    );
+    expect(
+      AiBlueprintDraft.parse(sample, 120).dependenciesFor()['1:0'],
+      isEmpty,
+    );
+  });
   test('AI blueprint commits atomically and can be safely undone', () async {
     final dir = await Directory.systemTemp.createTemp('xu-ai-blueprint-');
     addTearDown(() async {
@@ -30,7 +57,10 @@ void main() {
     repo.load({'formatVersion': 1});
     Get.put<WorkspaceRepository>(repo);
     final vm = Get.put<WorkspaceViewModel>(WorkspaceViewModel());
-    await vm.createAiBlueprint(AiBlueprintDraft.parse(sample, 120));
+    await vm.createAiBlueprint(
+      AiBlueprintDraft.parse(sample, 120),
+      chainStages: true,
+    );
     expect(vm.items('blueprints'), hasLength(1));
     expect(vm.items('stages'), hasLength(2));
     expect(vm.items('milestones'), hasLength(2));

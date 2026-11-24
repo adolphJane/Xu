@@ -6,22 +6,23 @@ import 'ai_blueprint.dart';
 import 'workspace.dart';
 
 Future<void> showAiBlueprintDialog(BuildContext context) async {
-  final goal = TextEditingController();
-  final minutes = TextEditingController(text: '90');
+  var goal = '';
+  var minutes = '90';
   var deadline = DateTime.now().add(const Duration(days: 30));
-  try {
+  {
     final request = await showDialog<(String, DateTime, int)>(
       context: context,
       builder: (dialog) => StatefulBuilder(
         builder: (dialog, setState) => AlertDialog(
           title: const Text('AI 创建蓝图'),
+          scrollable: true,
           content: SizedBox(
             width: 520,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
-                  controller: goal,
+                  onChanged: (value) => goal = value,
                   maxLines: 4,
                   autofocus: true,
                   decoration: const InputDecoration(
@@ -30,8 +31,9 @@ Future<void> showAiBlueprintDialog(BuildContext context) async {
                   ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: minutes,
+                TextFormField(
+                  initialValue: minutes,
+                  onChanged: (value) => minutes = value,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: '每日可用分钟（15～480）',
@@ -63,12 +65,12 @@ Future<void> showAiBlueprintDialog(BuildContext context) async {
             ),
             FilledButton(
               onPressed: () {
-                final value = int.tryParse(minutes.text);
-                if (goal.text.trim().isNotEmpty &&
+                final value = int.tryParse(minutes);
+                if (goal.trim().isNotEmpty &&
                     value != null &&
                     value >= 15 &&
                     value <= 480) {
-                  Navigator.pop(dialog, (goal.text.trim(), deadline, value));
+                  Navigator.pop(dialog, (goal.trim(), deadline, value));
                 }
               },
               child: const Text('生成草稿'),
@@ -97,66 +99,165 @@ Future<void> showAiBlueprintDialog(BuildContext context) async {
     }
     if (!context.mounted) return;
     final excluded = <String>{};
+    final overrides = <String, Set<String>>{};
+    final entries = draft.taskEntries;
+    final titles = <String, String>{};
+    var chain = false;
+    Future<void> editDraftTask(
+      BuildContext context,
+      String key,
+      Set<String> initial,
+    ) async {
+      final dependencies = Set.of(initial);
+      var title = titles[key] ?? entries[key]!.title;
+      final result = await showDialog<(String, Set<String>)>(
+        context: context,
+        builder: (dialog) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+            title: const Text('编辑任务与前置'),
+            content: SizedBox(
+              width: 440,
+              height: 340,
+              child: ListView(
+                children: [
+                  TextFormField(
+                    initialValue: title,
+                    decoration: const InputDecoration(labelText: '标题'),
+                    onChanged: (value) => update(() => title = value.trim()),
+                  ),
+                  for (final entry in entries.entries.where(
+                    (row) => row.key != key && !excluded.contains(row.key),
+                  ))
+                    CheckboxListTile(
+                      title: Text(titles[entry.key] ?? entry.value.title),
+                      value: dependencies.contains(entry.key),
+                      onChanged: (value) => update(() {
+                        if (value == true) {
+                          dependencies.add(entry.key);
+                        } else {
+                          dependencies.remove(entry.key);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: title.isEmpty
+                    ? null
+                    : () => Navigator.pop(dialog, (title, dependencies)),
+                child: const Text('应用'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (result != null) {
+        titles[key] = result.$1;
+        overrides[key] = result.$2;
+      }
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialog) => StatefulBuilder(
-        builder: (dialog, setState) => AlertDialog(
-          title: Text('确认蓝图：${draft.name}'),
-          content: SizedBox(
-            width: 680,
-            height: 500,
-            child: ListView(
-              children: [
-                Text(draft.goal),
-                const SizedBox(height: 12),
-                for (
-                  var stageIndex = 0;
-                  stageIndex < draft.stages.length;
-                  stageIndex++
-                ) ...[
-                  Text(
-                    draft.stages[stageIndex].name,
-                    style: Theme.of(dialog).textTheme.titleMedium,
+        builder: (dialog, setState) {
+          Map<String, Set<String>> edges = {};
+          String? error;
+          try {
+            edges = draft.dependenciesFor(
+              excluded: excluded,
+              overrides: overrides,
+              chainStages: chain,
+            );
+          } catch (failure) {
+            error = '$failure';
+          }
+          return AlertDialog(
+            title: Text('确认蓝图：${draft.name}'),
+            content: SizedBox(
+              width: 680,
+              height: 500,
+              child: ListView(
+                children: [
+                  Text(draft.goal),
+                  SwitchListTile(
+                    title: const Text('按阶段顺序串联'),
+                    subtitle: const Text('将上一阶段出口接到下一阶段入口'),
+                    value: chain,
+                    onChanged: (value) => setState(() => chain = value),
                   ),
-                  for (
-                    var taskIndex = 0;
-                    taskIndex < draft.stages[stageIndex].tasks.length;
-                    taskIndex++
-                  )
-                    CheckboxListTile(
-                      value: !excluded.contains('$stageIndex:$taskIndex'),
-                      onChanged: (value) => setState(() {
-                        final key = '$stageIndex:$taskIndex';
-                        if (value == true) {
-                          excluded.remove(key);
-                        } else {
-                          excluded.add(key);
-                        }
-                      }),
-                      title: Text(
-                        draft.stages[stageIndex].tasks[taskIndex].title,
+                  if (error != null)
+                    Text(
+                      error,
+                      style: TextStyle(
+                        color: Theme.of(dialog).colorScheme.error,
                       ),
+                    ),
+                  for (final entry in entries.entries)
+                    ListTile(
+                      leading: Checkbox(
+                        value: !excluded.contains(entry.key),
+                        onChanged: (value) => setState(() {
+                          if (value == true) {
+                            excluded.remove(entry.key);
+                          } else {
+                            excluded.add(entry.key);
+                          }
+                        }),
+                      ),
+                      title: Text(titles[entry.key] ?? entry.value.title),
                       subtitle: Text(
-                        '${draft.stages[stageIndex].tasks[taskIndex].scheduledFor.toLocal().toString().split(' ').first} · ${draft.stages[stageIndex].tasks[taskIndex].estimatedMinutes} 分钟',
+                        [
+                          '${entry.value.scheduledFor.toLocal().toString().split(' ').first} · ${entry.value.estimatedMinutes} 分钟',
+                          if (edges[entry.key]?.isNotEmpty == true)
+                            '等待 ${edges[entry.key]!.map((key) => titles[key] ?? entries[key]!.title).join('、')}',
+                          if (entry.value.dependencyReason.isNotEmpty)
+                            entry.value.dependencyReason,
+                        ].join('\n'),
+                      ),
+                      trailing: IconButton(
+                        tooltip: '编辑任务与前置',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: excluded.contains(entry.key)
+                            ? null
+                            : () async {
+                                final base =
+                                    draft.dependenciesFor(
+                                      excluded: excluded,
+                                    )[entry.key] ??
+                                    {};
+                                await editDraftTask(
+                                  dialog,
+                                  entry.key,
+                                  overrides[entry.key] ?? base,
+                                );
+                                if (dialog.mounted) setState(() {});
+                              },
                       ),
                     ),
                 ],
-              ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialog, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: excluded.length == draft.tasks.length
-                  ? null
-                  : () => Navigator.pop(dialog, true),
-              child: const Text('创建蓝图'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: excluded.length == entries.length || error != null
+                    ? null
+                    : () => Navigator.pop(dialog, true),
+                child: const Text('创建蓝图'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (confirmed != true || !context.mounted) return;
@@ -164,6 +265,9 @@ Future<void> showAiBlueprintDialog(BuildContext context) async {
       await Get.find<WorkspaceViewModel>().createAiBlueprint(
         draft,
         excludedTaskKeys: excluded,
+        dependencyOverrides: overrides,
+        taskTitles: titles,
+        chainStages: chain,
       );
     } catch (error) {
       if (context.mounted) {
@@ -171,8 +275,5 @@ Future<void> showAiBlueprintDialog(BuildContext context) async {
             .showSnackBar(SnackBar(content: Text('$error')));
       }
     }
-  } finally {
-    goal.dispose();
-    minutes.dispose();
   }
 }

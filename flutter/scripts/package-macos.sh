@@ -22,7 +22,7 @@ if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
 fi
 
 mkdir -p "${DIST_DIR}" "${DMG_ROOT}"
-"${SCRIPT_DIR}/build-app.sh" --release --universal --output "${APP_DIR}"
+"${SCRIPT_DIR}/build-app.sh" "$@" --release --universal --output "${APP_DIR}"
 rm -rf "${DIST_DIR}/序.app"
 ditto "${APP_DIR}" "${DIST_DIR}/序.app"
 

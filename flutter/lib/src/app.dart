@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:ifa_flutter_scaffold/ifa_flutter_scaffold.dart';
 
 import 'workspace.dart';
@@ -13,38 +14,69 @@ import 'ai.dart';
 import 'updates.dart';
 import 'workflow.dart';
 import 'blueprint_templates.dart';
+import 'blueprint_images.dart';
+import 'blueprint_workbench.dart';
 import 'replan.dart';
 import 'reports.dart';
 import 'plan_history.dart';
 import 'ai_blueprint_dialog.dart';
 import 'anniversary_cover.dart';
 import 'design_system/xu_theme.dart';
+import 'design_system/components/xu_compact_navigation.dart';
 import 'design_system/components/xu_shell.dart';
 import 'command_palette.dart';
 import 'calendar_page.dart';
+import 'calendar_plan_logic.dart';
+import 'category_icons.dart';
 
-const pages = <String, (String, IconData)>{
-  'today': ('今日', Icons.wb_sunny_outlined),
-  'inbox': ('收集箱', Icons.inbox_outlined),
-  'tasks': ('事项', Icons.checklist),
-  'blueprints': ('蓝图', Icons.account_tree_outlined),
-  'quadrants': ('四象限', Icons.grid_view_outlined),
-  'calendar': ('日历计划', Icons.calendar_month_outlined),
-  'categories': ('分类', Icons.label_outline),
-  'anniversaries': ('纪念日', Icons.favorite_border),
-  'processed': ('已处理', Icons.check_circle_outline),
-  'reports': ('日报', Icons.description_outlined),
-  'settings': ('设置', Icons.settings_outlined),
+const pages = <String, (String, IconData, IconData)>{
+  'today': ('今日', Icons.wb_sunny_outlined, Icons.wb_sunny_rounded),
+  'inbox': ('收集箱', Icons.inbox_outlined, Icons.inbox_rounded),
+  'tasks': ('事项', Icons.checklist_rounded, Icons.fact_check_rounded),
+  'calendar': (
+    '日历计划',
+    Icons.calendar_month_outlined,
+    Icons.calendar_month_rounded,
+  ),
+  'categories': ('分类', Icons.sell_outlined, Icons.sell_rounded),
+  'anniversaries': (
+    '纪念日',
+    Icons.favorite_border_rounded,
+    Icons.favorite_rounded,
+  ),
+  'processed': ('已处理', Icons.task_alt_rounded, Icons.check_circle_rounded),
+  'reports': ('日报', Icons.description_outlined, Icons.description_rounded),
+  'settings': ('设置', Icons.settings_outlined, Icons.settings_rounded),
 };
 
-const categorySymbols = <String, (String, IconData)>{
-  'label': ('标签', Icons.label_outline),
-  'work': ('工作', Icons.work_outline),
-  'home': ('生活', Icons.home_outlined),
-  'school': ('学习', Icons.school_outlined),
-  'book': ('阅读', Icons.menu_book_outlined),
-  'favorite': ('健康', Icons.favorite_border),
-  'folder': ('项目', Icons.folder_outlined),
+final _navigationItems = [
+  for (final entry in pages.entries)
+    XuNavigationItem(entry.key, entry.value.$1, entry.value.$2, entry.value.$3),
+];
+
+bool get _mobilePlatform => Platform.isAndroid || Platform.isIOS;
+
+Future<Map<String, dynamic>?> _pickJsonFile() async {
+  final file = await FilePicker.pickFile(
+    type: FileType.custom,
+    allowedExtensions: ['json'],
+  );
+  if (file == null) return null;
+  final json = jsonDecode(utf8.decode(await file.readAsBytes()));
+  if (json is! Map<String, dynamic>) {
+    throw const FormatException('请选择有效的 JSON 文件');
+  }
+  return json;
+}
+
+const _taskStatusLabels = {
+  'pending': '待办',
+  'inProgress': '进行中',
+  'blocked': '阻塞',
+  'completed': '已完成',
+  'cancelled': '已取消',
+  'unscheduled': '未安排',
+  'postponed': '已顺延',
 };
 
 class XuApp extends StatelessWidget {
@@ -55,6 +87,9 @@ class XuApp extends StatelessWidget {
     return Obx(
       () => GetMaterialApp(
         title: '序',
+        locale: const Locale('zh', 'CN'),
+        supportedLocales: const [Locale('zh', 'CN')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         debugShowCheckedModeBanner: false,
         themeMode: vm.themeMode.value,
         theme: XuTheme.build(Brightness.light),
@@ -71,13 +106,11 @@ class HomePage extends BasePage<WorkspaceViewModel> {
   final RxInt _seriesRevision = 0.obs;
   final RxBool _showArchivedBlueprints = false.obs;
   final RxString _taskScope = 'active'.obs;
+  final RxString _processedScope = 'all'.obs;
   final RxString _taskCategory = ''.obs;
   final RxString _taskDisplay = 'list'.obs;
   final RxString _categorySelection = '\u0000all'.obs;
   final RxString _categoryScope = 'active'.obs;
-  final RxString _newCategoryName = ''.obs;
-  final RxInt _categoryInputRevision = 0.obs;
-  final RxBool _categorySaving = false.obs;
   @override
   void preBuild() {
     NativeBridge.listen(
@@ -128,8 +161,17 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     );
   }
 
+  void _openTaskView(String view) {
+    if (controller.section.value != 'tasks') controller.search.value = '';
+    _taskDisplay.value = view;
+    controller.section.value = 'tasks';
+  }
+
   Future<void> _showCommandPalette(BuildContext context) async {
-    final action = await showXuCommandPalette(context);
+    final action = await showXuCommandPalette(
+      context,
+      includeDesktopWidget: !_mobilePlatform,
+    );
     if (!context.mounted) return;
     switch (action) {
       case 'add':
@@ -139,10 +181,10 @@ class HomePage extends BasePage<WorkspaceViewModel> {
       case 'ai':
         await showAiTaskDraft(context);
       case 'blueprint':
-        controller.section.value = 'blueprints';
+        _openTaskView('blueprints');
         await showEditor(context, 'blueprints');
       case 'aiBlueprint':
-        controller.section.value = 'blueprints';
+        _openTaskView('blueprints');
         await showAiBlueprintDialog(context);
       case 'report':
         controller.section.value = 'reports';
@@ -150,7 +192,9 @@ class HomePage extends BasePage<WorkspaceViewModel> {
       case 'today':
         controller.section.value = 'today';
       case 'blueprints':
-        controller.section.value = 'blueprints';
+        _openTaskView('blueprints');
+      case 'quadrants':
+        _openTaskView('quadrants');
       case 'anniversaries':
         controller.section.value = 'anniversaries';
       case 'widget':
@@ -161,36 +205,42 @@ class HomePage extends BasePage<WorkspaceViewModel> {
   }
 
   Future<void> _showSearch(BuildContext context) async {
-    final searchInput = TextEditingController(text: controller.search.value);
-    await showDialog<void>(
+    var query = controller.search.value;
+    final result = await showDialog<String>(
       context: context,
       builder: (dialog) => AlertDialog(
         title: const Text('搜索事项'),
-        content: TextField(
+        content: TextFormField(
           autofocus: true,
-          controller: searchInput,
+          initialValue: query,
           decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            hintText: '输入事项名称或备注',
+            prefixIcon: Icon(Icons.search_rounded),
+            labelText: '名称、备注或分类',
           ),
-          onChanged: (value) => controller.search.value = value,
+          onChanged: (value) => query = value,
+          onFieldSubmitted: (value) => Navigator.pop(dialog, value.trim()),
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              controller.search.value = '';
-              Navigator.pop(dialog);
-            },
+            onPressed: () => Navigator.pop(dialog, ''),
             child: const Text('清除'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(dialog),
-            child: const Text('完成'),
+            onPressed: () => Navigator.pop(dialog, query.trim()),
+            child: const Text('搜索'),
           ),
         ],
       ),
     );
-    searchInput.dispose();
+    if (result == null || !context.mounted) return;
+    final section = controller.section.value;
+    if (result.isNotEmpty &&
+        !const {'today', 'inbox', 'tasks', 'processed'}.contains(section)) {
+      _taskScope.value = 'all';
+      _taskCategory.value = '';
+      _openTaskView('list');
+    }
+    controller.search.value = result;
   }
 
   @override
@@ -233,36 +283,12 @@ class HomePage extends BasePage<WorkspaceViewModel> {
         },
         child: Focus(
           autofocus: true,
-          child: Material(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: Row(
-              children: [
-                Obx(
-                  () => XuSidebar(
-                    items: [
-                      for (final entry in pages.entries)
-                        XuNavigationItem(
-                          entry.key,
-                          entry.value.$1,
-                          entry.value.$2,
-                        ),
-                    ],
-                    selected: controller.section.value,
-                    onSelect: (key) {
-                      if (key != controller.section.value) {
-                        controller.search.value = '';
-                      }
-                      controller.section.value = key;
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: Obx(() {
-                    controller.revision.value;
-                    return _content(context, controller.section.value);
-                  }),
-                ),
-              ],
+          child: LayoutBuilder(
+            builder: (context, constraints) => _workspace(
+              context,
+              compact:
+                  constraints.maxWidth < 720 ||
+                  (_mobilePlatform && constraints.maxHeight < 500),
             ),
           ),
         ),
@@ -270,102 +296,148 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     );
   }
 
-  Widget _content(BuildContext context, String page) {
-    final vm = controller;
-    final title = pages[page]!.$1;
-    final actions = <Widget>[
-      if (page == 'blueprints')
-        TextButton.icon(
-          onPressed: () => showPlanHistory(context, null),
-          icon: const Icon(Icons.history),
-          label: const Text('AI 变更记录'),
-        ),
-      if (page == 'blueprints')
-        TextButton.icon(
-          onPressed: () => showAiBlueprintDialog(context),
-          icon: const Icon(Icons.auto_awesome),
-          label: const Text('AI 创建蓝图'),
-        ),
-      if (page == 'blueprints')
-        TextButton.icon(
-          onPressed: () => showTemplateDialog(context),
-          icon: const Icon(Icons.auto_fix_high),
-          label: const Text('从模板创建'),
-        ),
-      if (page == 'blueprints')
-        TextButton.icon(
-          onPressed: () async {
-            try {
-              final files = await FilePicker.pickFiles(
-                type: FileType.custom,
-                allowedExtensions: ['json'],
-              );
-              if (files.isEmpty || files.single.path == null) return;
-              final package = jsonDecode(
-                await File(files.single.path!).readAsString(),
-              ) as Map<String, dynamic>;
-              await controller.importBlueprint(package);
-            } catch (error) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text('$error')));
-              }
-            }
+  void _selectPage(String page) {
+    if (page != controller.section.value) controller.search.value = '';
+    controller.section.value = page;
+  }
+
+  Widget _workspace(BuildContext context, {required bool compact}) {
+    final body = Obx(() {
+      controller.revision.value;
+      return _content(context, controller.section.value, compact: compact);
+    });
+    final workspace = compact
+        ? body
+        : Row(
+            children: [
+              Obx(
+                () => XuSidebar(
+                  items: _navigationItems,
+                  selected: controller.section.value,
+                  onSelect: _selectPage,
+                  desktop: !_mobilePlatform,
+                ),
+              ),
+              Expanded(child: body),
+            ],
+          );
+    if (!compact && !_mobilePlatform) {
+      return Scaffold(body: workspace);
+    }
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: dark
+            ? Brightness.light
+            : Brightness.dark,
+      ),
+      child: Obx(
+        () => PopScope(
+          canPop: controller.section.value == 'today',
+          onPopInvokedWithResult: (popped, _) {
+            if (!popped) _selectPage('today');
           },
-          icon: const Icon(Icons.file_open_outlined),
-          label: const Text('导入蓝图'),
-        ),
-      if (page == 'processed')
-        SizedBox(
-          width: 210,
-          child: TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: '搜索事项',
-              isDense: true,
-            ),
-            onChanged: (value) => controller.search.value = value,
+          child: Scaffold(
+            body: SafeArea(bottom: !compact, child: workspace),
+            bottomNavigationBar:
+                compact && MediaQuery.viewInsetsOf(context).bottom == 0
+                ? XuCompactNavigation(
+                    items: _navigationItems,
+                    selected: controller.section.value,
+                    onSelect: _selectPage,
+                  )
+                : null,
           ),
         ),
-      if (page != 'settings' &&
-          page != 'tasks' &&
-          page != 'categories' &&
-          page != 'calendar' &&
-          page != 'inbox' &&
-          (page != 'today' || vm.todayTasks.isNotEmpty))
-        IconButton(
-          tooltip: '添加',
-          onPressed: () => page == 'categories'
-              ? showCategoryEditor(context)
-              : page == 'reports'
-              ? showReportEditor(context)
-              : showEditor(
-                  context,
-                  page == 'blueprints'
-                      ? 'blueprints'
-                      : page == 'anniversaries'
-                      ? 'anniversaries'
-                      : 'tasks',
-                ),
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context, String page, {required bool compact}) {
+    final vm = controller;
+    final title = pages[page]!.$1;
+    final now = DateTime.now();
+    final actions = <Widget>[
+      if (page == 'today') ...[
+        MenuAnchor(
+          menuChildren: [
+            MenuItemButton(
+              leadingIcon: const Icon(Icons.account_tree_outlined),
+              onPressed: () => _openTaskView('blueprints'),
+              child: const Text('按蓝图浏览'),
+            ),
+            MenuItemButton(
+              leadingIcon: const Icon(Icons.grid_view_rounded),
+              onPressed: () => _openTaskView('quadrants'),
+              child: const Text('按四象限浏览'),
+            ),
+          ],
+          builder: (context, menu, child) => OutlinedButton.icon(
+            onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+            icon: const Icon(Icons.view_quilt_outlined),
+            label: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('事项视图'),
+                SizedBox(width: 4),
+                Icon(Icons.expand_more_rounded, size: 18),
+              ],
+            ),
+          ),
+        ),
+        if (vm.todayTasks.isNotEmpty)
+          FilledButton.icon(
+            onPressed: () => showEditor(context, 'tasks'),
+            icon: const Icon(Icons.add),
+            label: const Text('添加事项'),
+          ),
+      ],
+      if (page == 'processed' && _processedTasks().isNotEmpty)
+        OutlinedButton.icon(
+          onPressed: () => _showSearch(context),
+          icon: const Icon(Icons.search_rounded),
+          label: const Text('搜索记录'),
+        ),
+      if (page == 'anniversaries' && vm.items('anniversaries').isNotEmpty)
+        FilledButton.icon(
+          onPressed: () => showEditor(context, 'anniversaries'),
           icon: const Icon(Icons.add),
+          label: const Text('添加纪念日'),
+        ),
+      if (page == 'reports')
+        FilledButton.icon(
+          onPressed: () => showReportEditor(context),
+          icon: const Icon(Icons.edit_note_rounded),
+          label: const Text('创建日报'),
         ),
     ];
-    final primaryAction = actions.isEmpty ? null : actions.removeLast();
     return Column(
       children: [
         XuTopBar(
-          section:
-              const {
-                'inbox',
-                'anniversaries',
-                'processed',
-                'reports',
-              }.contains(page)
+          compact: compact,
+          section: page == 'settings'
+              ? ''
+              : const {
+                  'inbox',
+                  'anniversaries',
+                  'processed',
+                  'reports',
+                }.contains(page)
               ? '记录'
               : '工作区',
-          title: title,
+          title: compact && page != 'calendar' ? '序' : title,
           onSearch: () => _showSearch(context),
           onPalette: () => _showCommandPalette(context),
+          onUndo: vm.undoCount.value == 0
+              ? null
+              : () => _changeWorkspaceHistory(context, vm.undo),
+          onRedo: vm.redoCount.value == 0
+              ? null
+              : () => _changeWorkspaceHistory(context, vm.redo),
         ),
         if (vm.repository.loadError != null)
           MaterialBanner(
@@ -377,89 +449,57 @@ class HomePage extends BasePage<WorkspaceViewModel> {
               ),
             ],
           ),
-        if (page != 'tasks' &&
-            page != 'categories' &&
-            page != 'calendar' &&
-            page != 'inbox')
-          Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: page == 'tasks' ? 1176 : double.infinity,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(28, 20, 28, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (page == 'today') ...[
-                      Text(
-                        '${DateTime.now().month}月${DateTime.now().day}日 星期${'一二三四五六日'[DateTime.now().weekday - 1]}',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    Row(
-                      children: [
-                        Text(
-                          title,
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        ),
-                        const Spacer(),
-                        ?primaryAction,
-                      ],
-                    ),
-                    if (actions.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: Wrap(
-                          alignment: page == 'tasks'
-                              ? WrapAlignment.start
-                              : WrapAlignment.end,
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: actions,
-                        ),
-                      ),
-                    ],
-                    if (page == 'today') ...[
-                      const SizedBox(height: 24),
-                      const Divider(height: 1),
-                    ],
-                  ],
+        if (!const {'tasks', 'categories', 'calendar', 'inbox'}.contains(page))
+          Padding(
+            padding: compact
+                ? const EdgeInsets.fromLTRB(16, 12, 16, 12)
+                : const EdgeInsets.fromLTRB(28, 20, 28, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                XuPageHeader(
+                  title: title,
+                  eyebrow: page == 'today'
+                      ? '${now.month}月${now.day}日 星期${'一二三四五六日'[now.weekday - 1]}'
+                      : null,
+                  description: switch (page) {
+                    'processed' => '查阅完成、取消和顺延记录。',
+                    'reports' => '记录执行进展，回顾每周行动。',
+                    _ => null,
+                  },
+                  actions: actions,
                 ),
-              ),
+                if (page == 'today') ...[
+                  const SizedBox(height: 16),
+                  const Divider(height: 1),
+                ],
+              ],
             ),
           ),
         Expanded(
-          child: switch (page) {
-            'today' => _todayPage(context),
-            'inbox' => _inboxPage(context),
-            'tasks' => _tasksWorkbench(context),
-            'processed' => _taskList(
-              context,
-              vm.tasks
-                  .where(
-                    (t) =>
-                        t['status'] == 'completed' ||
-                        t['status'] == 'cancelled',
-                  )
-                  .toList(),
-              empty: '暂无已处理事项',
+          child: SizedBox.expand(
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(page),
+              tween: Tween(begin: 0.76, end: 1),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              builder: (context, opacity, child) =>
+                  Opacity(opacity: opacity, child: child),
+              child: switch (page) {
+                'today' => _todayPage(context, compact: compact),
+                'inbox' => _inboxPage(context),
+                'tasks' => _tasksWorkbench(context),
+                'processed' => _processedPage(context),
+                'calendar' => _calendar(context, compact: compact),
+                'categories' => _categories(context),
+                'anniversaries' => _anniversaries(context),
+                'reports' => const ReportsPage(),
+                _ => _settings(context),
+              },
             ),
-            'quadrants' => _quadrants(context),
-            'calendar' => _calendar(context),
-            'categories' => _categories(context),
-            'blueprints' => _blueprintWorkbench(context),
-            'anniversaries' => _records(context, 'anniversaries', '还没有纪念日'),
-            'reports' => const ReportsPage(),
-            _ => _settings(context),
-          },
+          ),
         ),
       ],
     );
@@ -470,7 +510,6 @@ class HomePage extends BasePage<WorkspaceViewModel> {
 
   Widget _inboxPage(BuildContext context) {
     final vm = controller;
-    final colors = XuColors.of(context);
     final entries =
         vm.tasks
             .asMap()
@@ -507,23 +546,12 @@ class HomePage extends BasePage<WorkspaceViewModel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'CAPTURE',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.primary,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 2,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 16,
-            runSpacing: 12,
-            children: [
-              Text('收集箱', style: Theme.of(context).textTheme.headlineMedium),
+          XuPageHeader(
+            title: '收集箱',
+            description: tasks.isEmpty
+                ? '先记下事项，稍后安排日期。'
+                : '${tasks.length} 项待安排',
+            actions: [
               if (tasks.isNotEmpty)
                 FilledButton.icon(
                   onPressed: capture,
@@ -532,49 +560,15 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                 ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text('快速记下，稍后再判断优先级', style: Theme.of(context).textTheme.bodySmall),
-          if (tasks.isNotEmpty) const SizedBox(height: 24),
+          const SizedBox(height: 16),
           Expanded(
             child: tasks.isEmpty
-                ? Center(
-                    child: SingleChildScrollView(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.inbox_outlined,
-                              size: 58,
-                              color: colors.secondaryText.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              '收集箱已清空',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.headlineSmall
-                                  ?.copyWith(color: colors.secondaryText),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              '新建事项时选择“暂不安排日期”，就可以先收集、稍后再规划。',
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(color: colors.secondaryText),
-                            ),
-                            const SizedBox(height: 24),
-                            FilledButton.icon(
-                              onPressed: capture,
-                              icon: const Icon(Icons.add),
-                              label: const Text('收集事项'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                ? XuEmptyState(
+                    icon: Icons.inbox_outlined,
+                    title: '收集箱已清空',
+                    description: '想到新事项时，可以先收集起来。',
+                    actionLabel: '收集事项',
+                    onAction: capture,
                   )
                 : visible.isEmpty
                 ? XuEmptyState(
@@ -621,7 +615,11 @@ class HomePage extends BasePage<WorkspaceViewModel> {
           status != 'completed' &&
               status != 'cancelled' &&
               root['scheduledFor'] == null,
-        'processed' => status == 'completed' || status == 'cancelled',
+        'processed' =>
+          status == 'completed' ||
+              status == 'cancelled' ||
+              status == 'postponed' ||
+              _postponements(root).isNotEmpty,
         _ => true,
       };
     }
@@ -671,20 +669,28 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     );
     final displayToggle = SegmentedButton<String>(
       segments: const [
-        ButtonSegment(value: 'list', label: Text('列表')),
-        ButtonSegment(value: 'quadrants', label: Text('四象限')),
+        ButtonSegment(
+          value: 'list',
+          icon: Icon(Icons.view_list_outlined),
+          label: Text('列表'),
+        ),
+        ButtonSegment(
+          value: 'quadrants',
+          icon: Icon(Icons.grid_view_outlined),
+          label: Text('四象限'),
+        ),
+        ButtonSegment(
+          value: 'blueprints',
+          icon: Icon(Icons.account_tree_outlined),
+          label: Text('蓝图'),
+        ),
       ],
       selected: {_taskDisplay.value},
       onSelectionChanged: (value) => _taskDisplay.value = value.first,
       showSelectedIcon: false,
     );
-    final searchField = TextFormField(
-      initialValue: controller.search.value,
-      decoration: const InputDecoration(
-        prefixIcon: Icon(Icons.search),
-        hintText: '搜索事项',
-        border: InputBorder.none,
-      ),
+    final searchField = _TaskSearchField(
+      value: controller.search.value,
       onChanged: (value) => controller.search.value = value,
     );
     final categoryField = DropdownButton<String>(
@@ -701,128 +707,126 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 900;
+        final compact =
+            constraints.maxWidth < 620 || constraints.maxHeight < 400;
+        final controls = [
+          XuPageHeader(
+            title: '事项',
+            actions: [
+              if (controller.selectedTaskIds.isNotEmpty) ...[
+                PopupMenuButton<String>(
+                  tooltip: '批量操作',
+                  onSelected: (action) async {
+                    if (action == 'delete') {
+                      final confirmed = await showDialog<bool>(
+                        context: context,
+                        builder: (dialog) => AlertDialog(
+                          title: const Text('批量删除事项'),
+                          content: Text(
+                            '确定删除选中的 ${controller.selectedTaskIds.length} 项事项及其子任务吗？',
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(dialog, false),
+                              child: const Text('取消'),
+                            ),
+                            FilledButton(
+                              onPressed: () => Navigator.pop(dialog, true),
+                              child: const Text('删除'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirmed != true || !context.mounted) return;
+                    }
+                    try {
+                      await controller.applyTaskBatch(action);
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('$error')));
+                      }
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'start', child: Text('批量开始')),
+                    PopupMenuItem(value: 'complete', child: Text('批量完成')),
+                    PopupMenuItem(value: 'cancel', child: Text('批量取消')),
+                    PopupMenuItem(value: 'today', child: Text('批量安排今天')),
+                    PopupMenuItem(value: 'delete', child: Text('批量删除')),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text('批量操作（${controller.selectedTaskIds.length}）'),
+                  ),
+                ),
+              ],
+              FilledButton.icon(
+                onPressed: () => showEditor(context, 'tasks'),
+                icon: const Icon(Icons.add),
+                label: const Text('添加事项'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (narrow) ...[
+            scopeTabs(),
+            const SizedBox(height: 12),
+            displayToggle,
+          ] else
+            Row(
+              children: [
+                Expanded(child: scopeTabs()),
+                displayToggle,
+              ],
+            ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: colors.border),
+            ),
+            child: constraints.maxWidth < 620
+                ? Column(
+                    children: [
+                      searchField,
+                      const Divider(height: 1),
+                      categoryField,
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: searchField),
+                      const SizedBox(width: 20),
+                      SizedBox(width: 180, child: categoryField),
+                    ],
+                  ),
+          ),
+          SizedBox(height: compact ? 12 : 24),
+        ];
         return Padding(
-          padding: const EdgeInsets.fromLTRB(28, 24, 28, 28),
+          padding: compact
+              ? const EdgeInsets.fromLTRB(16, 12, 16, 12)
+              : const EdgeInsets.fromLTRB(28, 24, 28, 28),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
+              if (compact)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: constraints.maxHeight * 0.68,
+                  ),
+                  child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '事项',
-                          style: Theme.of(context).textTheme.headlineMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '收集、安排与推进每一件事。',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
+                      children: controls,
                     ),
                   ),
-                  if (controller.selectedTaskIds.isNotEmpty) ...[
-                    PopupMenuButton<String>(
-                      tooltip: '批量操作',
-                      onSelected: (action) async {
-                        if (action == 'delete') {
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (dialog) => AlertDialog(
-                              title: const Text('批量删除事项'),
-                              content: Text(
-                                '确定删除选中的 ${controller.selectedTaskIds.length} 项事项及其子任务吗？',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(dialog, false),
-                                  child: const Text('取消'),
-                                ),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(dialog, true),
-                                  child: const Text('删除'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed != true || !context.mounted) return;
-                        }
-                        try {
-                          await controller.applyTaskBatch(action);
-                        } catch (error) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(
-                              context,
-                            ).showSnackBar(SnackBar(content: Text('$error')));
-                          }
-                        }
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'complete', child: Text('批量完成')),
-                        PopupMenuItem(value: 'cancel', child: Text('批量取消')),
-                        PopupMenuItem(value: 'today', child: Text('批量安排今天')),
-                        PopupMenuItem(value: 'delete', child: Text('批量删除')),
-                      ],
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          '批量操作（${controller.selectedTaskIds.length}）',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                  ],
-                  FilledButton.icon(
-                    onPressed: () => showEditor(context, 'tasks'),
-                    icon: const Icon(Icons.add),
-                    label: const Text('添加事项'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              if (narrow) ...[
-                scopeTabs(),
-                const SizedBox(height: 12),
-                displayToggle,
-              ] else
-                Row(
-                  children: [
-                    Expanded(child: scopeTabs()),
-                    displayToggle,
-                  ],
-                ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: scheme.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: colors.border),
-                ),
-                child: narrow
-                    ? Column(
-                        children: [
-                          searchField,
-                          const Divider(height: 1),
-                          categoryField,
-                        ],
-                      )
-                    : Row(
-                        children: [
-                          Expanded(child: searchField),
-                          const SizedBox(width: 20),
-                          SizedBox(width: 180, child: categoryField),
-                        ],
-                      ),
-              ),
-              const SizedBox(height: 24),
+                )
+              else
+                ...controls,
               Expanded(
                 child: Align(
                   alignment: Alignment.topCenter,
@@ -840,6 +844,16 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                       ),
                       child: _taskDisplay.value == 'quadrants'
                           ? _quadrants(context, source: visible)
+                          : _taskDisplay.value == 'blueprints'
+                          ? _blueprintWorkbench(
+                              context,
+                              visible,
+                              query: query,
+                              category: category,
+                              matchingRootIds: visible
+                                  .map((task) => '${rootOf(task)['id']}')
+                                  .toSet(),
+                            )
                           : visible.isEmpty
                           ? XuEmptyState(
                               icon: query.isEmpty
@@ -866,7 +880,7 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     );
   });
 
-  Widget _todayPage(BuildContext context) {
+  Widget _todayPage(BuildContext context, {required bool compact}) {
     final visible = controller
         .items('anniversaries')
         .where((row) => row['showOnHome'] != false)
@@ -914,11 +928,12 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                 padding: const EdgeInsets.symmetric(horizontal: 28),
                 child: Card(
                   child: ListTile(
-                    leading: const Icon(Icons.cake_outlined),
+                    leading: const XuIconTile(Icons.event_available_outlined),
                     title: Text(
                       row['privacyMode'] == true ? '重要日子' : '${row['name']}',
                     ),
                     subtitle: Text(days == 0 ? '就是今天' : '还有 $days 天'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: () => controller.section.value = 'anniversaries',
                   ),
                 ),
@@ -933,7 +948,9 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                   title: '今天还没有安排事项',
                   description: '从一件重要的事开始，安排好今天的节奏。',
                   actionLabel: '添加事项',
-                  shortcutHint: '⌘  N   快速添加',
+                  shortcutHint: compact || _mobilePlatform
+                      ? null
+                      : '⌘  N   快速添加',
                   onAction: () => showEditor(context, 'tasks'),
                 )
               : _taskList(context, controller.todayTasks, empty: '没有匹配的事项'),
@@ -1027,10 +1044,13 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                             }
                             _seriesRevision.value++;
                           },
-                          icon: Icon(
-                            expanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_right,
+                          icon: AnimatedRotation(
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 180),
+                            curve: Curves.easeInOut,
+                            turns: expanded ? 0.25 : 0,
+                            child: const Icon(Icons.chevron_right_rounded),
                           ),
                         ),
                       Checkbox(
@@ -1059,18 +1079,12 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                   ),
                   subtitle: Text(
                     [
-                      const {
-                            'pending': '待办',
-                            'inProgress': '进行中',
-                            'blocked': '阻塞',
-                            'completed': '已完成',
-                            'cancelled': '已取消',
-                            'unscheduled': '未安排',
-                          }['${task['status']}'] ??
-                          '待办',
+                      _taskStatusLabels[task['status']] ?? '待办',
                       task['project'],
                       task['category'],
                       task['scheduledFor']?.toString().split('T').first,
+                      if (_postponements(task).lastOrNull case final event?)
+                        '延期 ${_planDateLabel(event['from'])} → ${_planDateLabel(event['to'])}',
                       if (descendants.isNotEmpty)
                         '$completed/${descendants.length} 项子任务完成',
                     ].where((x) => x != null && '$x'.isNotEmpty).join(' · '),
@@ -1100,6 +1114,7 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                         ),
                       ),
                       PopupMenuButton<String>(
+                        tooltip: '事项操作',
                         onSelected: (action) async {
                           if (action == 'edit') {
                             showEditor(context, 'tasks', existing: task);
@@ -1110,13 +1125,13 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                               await controller.remove('tasks', '${task['id']}');
                             }
                             if (action == 'child' && context.mounted) {
-                              final input = TextEditingController();
+                              var input = '';
                               final name = await showDialog<String>(
                                 context: context,
                                 builder: (dialog) => AlertDialog(
                                   title: const Text('添加子任务'),
                                   content: TextField(
-                                    controller: input,
+                                    onChanged: (value) => input = value,
                                     autofocus: true,
                                     decoration: const InputDecoration(
                                       labelText: '标题',
@@ -1128,19 +1143,19 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                                       child: const Text('取消'),
                                     ),
                                     FilledButton(
-                                      onPressed: () => Navigator.pop(
-                                        dialog,
-                                        input.text.trim(),
-                                      ),
+                                      onPressed: () =>
+                                          Navigator.pop(dialog, input.trim()),
                                       child: const Text('添加'),
                                     ),
                                   ],
                                 ),
                               );
-                              input.dispose();
                               if (name != null && name.isNotEmpty) {
                                 await controller.addChild(task, name);
                               }
+                            }
+                            if (action == 'blueprint' && context.mounted) {
+                              await showBlueprintForTask(context, task);
                             }
                             if (action == 'start') {
                               await controller.setTaskStatus(
@@ -1162,14 +1177,13 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                               await controller.setTaskStatus(task, 'pending');
                             }
                             if (action == 'today') {
-                              await controller.put('tasks', {
-                                ...task,
-                                'scheduledFor': DateTime.now()
-                                    .toIso8601String(),
-                                'status': task['status'] == 'unscheduled'
-                                    ? 'pending'
-                                    : task['status'],
-                              });
+                              await controller.arrangeToday(task);
+                            }
+                            if (action == 'postpone') {
+                              await controller.postponeTask(task);
+                            }
+                            if (action == 'postponements' && context.mounted) {
+                              await _showPostponements(context, task);
                             }
                           } catch (error) {
                             if (context.mounted) {
@@ -1179,14 +1193,33 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                             }
                           }
                         },
-                        itemBuilder: (_) => const [
+                        itemBuilder: (_) => [
                           PopupMenuItem(value: 'edit', child: Text('编辑')),
+                          const PopupMenuItem(
+                            value: 'blueprint',
+                            child: Text('在蓝图中查看'),
+                          ),
                           PopupMenuItem(value: 'child', child: Text('添加子任务')),
                           PopupMenuItem(value: 'start', child: Text('开始')),
                           PopupMenuItem(value: 'block', child: Text('标记阻塞')),
                           PopupMenuItem(value: 'cancel', child: Text('取消任务')),
                           PopupMenuItem(value: 'restore', child: Text('恢复待办')),
-                          PopupMenuItem(value: 'today', child: Text('安排今天')),
+                          if (!CalendarPlanLogic.isProcessed(task))
+                            const PopupMenuItem(
+                              value: 'today',
+                              child: Text('安排今天'),
+                            ),
+                          if (!CalendarPlanLogic.isProcessed(task) &&
+                              CalendarPlanLogic.plannedDate(task) != null)
+                            const PopupMenuItem(
+                              value: 'postpone',
+                              child: Text('延期到明天'),
+                            ),
+                          if (_postponements(task).isNotEmpty)
+                            const PopupMenuItem(
+                              value: 'postponements',
+                              child: Text('延期记录'),
+                            ),
                           PopupMenuItem(value: 'delete', child: Text('删除')),
                         ],
                       ),
@@ -1224,7 +1257,9 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                               : null,
                         ),
                       ),
-                      subtitle: Text('${child['status'] ?? 'pending'}'),
+                      subtitle: Text(
+                        _taskStatusLabels[child['status']] ?? '待办',
+                      ),
                       onTap: () =>
                           showEditor(context, 'tasks', existing: child),
                     ),
@@ -1237,45 +1272,111 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     });
   }
 
-  Widget _blueprintWorkbench(BuildContext context) {
+  Widget _blueprintWorkbench(
+    BuildContext context,
+    List<Map<String, dynamic>> tasks, {
+    required String query,
+    required String category,
+    required Set<String> matchingRootIds,
+  }) {
     final blueprints = controller.items('blueprints');
+    final matchingBlueprintIds = tasks
+        .map((task) => task['blueprintID'])
+        .toSet();
+    final projectIds = blueprints.map((row) => row['id']).toSet();
     final roots = controller.tasks
-        .where((task) => task['parentTaskID'] == null)
+        .where(
+          (task) =>
+              matchingRootIds.contains('${task['id']}') &&
+              !projectIds.contains(task['blueprintID']),
+        )
         .toList();
+    final blueprintsWithTasks = controller.tasks
+        .map((task) => task['blueprintID'])
+        .toSet();
     final color = Theme.of(context).colorScheme;
     return Obx(() {
-      final visible = blueprints
-          .where(
-            (row) => _showArchivedBlueprints.value || row['archivedAt'] == null,
-          )
-          .toList();
+      final visible = blueprints.where((row) {
+        if (!_showArchivedBlueprints.value && row['archivedAt'] != null) {
+          return false;
+        }
+        if (matchingBlueprintIds.contains(row['id'])) return true;
+        if (category.isNotEmpty) return false;
+        if (query.isNotEmpty) {
+          return [
+            'name',
+            'goal',
+          ].any((field) => '${row[field] ?? ''}'.toLowerCase().contains(query));
+        }
+        return !blueprintsWithTasks.contains(row['id']);
+      }).toList();
       return ListView(
         padding: const EdgeInsets.fromLTRB(28, 8, 28, 32),
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
-                child: Text(
-                  '从任务出发，按步骤持续推进。',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
+              TextButton.icon(
+                onPressed: () => showPlanHistory(context, null),
+                icon: const Icon(Icons.history),
+                label: const Text('变更记录'),
               ),
-              Switch(
-                value: _showArchivedBlueprints.value,
-                onChanged: (value) => _showArchivedBlueprints.value = value,
+              TextButton.icon(
+                onPressed: () => showAiBlueprintDialog(context),
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('AI 创建蓝图'),
               ),
-              const Text('显示已归档'),
+              TextButton.icon(
+                onPressed: () => showTemplateDialog(context),
+                icon: const Icon(Icons.auto_fix_high),
+                label: const Text('从模板创建'),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  try {
+                    final package = await _pickJsonFile();
+                    if (package != null) {
+                      await controller.importBlueprint(package);
+                    }
+                  } catch (error) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text('$error')));
+                    }
+                  }
+                },
+                icon: const Icon(Icons.file_open_outlined),
+                label: const Text('导入蓝图'),
+              ),
+              FilledButton.icon(
+                onPressed: () => showEditor(context, 'blueprints'),
+                icon: const Icon(Icons.add),
+                label: const Text('新建蓝图'),
+              ),
+
+              FilterChip(
+                selected: _showArchivedBlueprints.value,
+                onSelected: (value) => _showArchivedBlueprints.value = value,
+                label: const Text('显示已归档'),
+              ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
           if (visible.isEmpty && roots.isEmpty)
-            const SizedBox(
-              height: 320,
-              child: Center(
-                child: Text(
-                  '还没有蓝图\n创建一份蓝图，把长期目标拆成可执行的步骤。',
-                  textAlign: TextAlign.center,
-                ),
+            SizedBox(
+              height: 260,
+              child: XuEmptyState(
+                icon: query.isNotEmpty || category.isNotEmpty
+                    ? Icons.search_off_rounded
+                    : Icons.account_tree_outlined,
+                title: query.isNotEmpty || category.isNotEmpty
+                    ? '没有匹配的蓝图'
+                    : '还没有蓝图',
+                description: query.isNotEmpty || category.isNotEmpty
+                    ? '调整关键词或分类后再查看。'
+                    : '创建蓝图后，可以把目标拆成串行和并行事项。',
               ),
             ),
           LayoutBuilder(
@@ -1283,6 +1384,70 @@ class HomePage extends BasePage<WorkspaceViewModel> {
               spacing: 16,
               runSpacing: 16,
               children: [
+                for (final row in visible)
+                  SizedBox(
+                    width: constraints.maxWidth < 620
+                        ? constraints.maxWidth
+                        : (constraints.maxWidth - 16) / 2,
+                    child: Card(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(color: color.outlineVariant),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => showBlueprintDetail(context, row),
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const XuIconTile(Icons.account_tree_outlined),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      '${row['name']}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Text(
+                                    '${(blueprintProgress('${row['id']}', controller.tasks) * 100).round()}%',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              Text(
+                                '${row['goal'] ?? '尚未填写目标说明'}',
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 14),
+                              LinearProgressIndicator(
+                                value: blueprintProgress(
+                                  '${row['id']}',
+                                  controller.tasks,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Text(
+                                '${controller.items('stages').where((stage) => stage['blueprintID'] == row['id']).length} 个阶段${row['archivedAt'] == null ? '' : ' · 已归档'}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 for (final root in roots)
                   SizedBox(
                     width: constraints.maxWidth < 620
@@ -1359,77 +1524,6 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                       },
                     ),
                   ),
-                for (final row in visible)
-                  SizedBox(
-                    width: constraints.maxWidth < 620
-                        ? constraints.maxWidth
-                        : (constraints.maxWidth - 16) / 2,
-                    child: Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        side: BorderSide(color: color.outlineVariant),
-                      ),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(16),
-                        onTap: () => showBlueprintDetail(context, row),
-                        child: Padding(
-                          padding: const EdgeInsets.all(18),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 10,
-                                    height: 34,
-                                    decoration: BoxDecoration(
-                                      color: color.primary,
-                                      borderRadius: BorderRadius.circular(5),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      '${row['name']}',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${(blueprintProgress('${row['id']}', controller.tasks) * 100).round()}%',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 14),
-                              Text(
-                                '${row['goal'] ?? '尚未填写目标说明'}',
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 14),
-                              LinearProgressIndicator(
-                                value: blueprintProgress(
-                                  '${row['id']}',
-                                  controller.tasks,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                '${controller.items('stages').where((stage) => stage['blueprintID'] == row['id']).length} 个阶段${row['archivedAt'] == null ? '' : ' · 已归档'}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1438,69 +1532,189 @@ class HomePage extends BasePage<WorkspaceViewModel> {
     });
   }
 
-  Widget _records(BuildContext context, String key, String empty) {
-    final rows = controller.items(key);
-    if (rows.isEmpty) return _empty(empty);
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 28),
-      children: [
-        for (final row in rows)
-          Card(
-            child: ListTile(
-              leading: key == 'anniversaries' && row['privacyMode'] != true
-                  ? _anniversaryCover(row)
-                  : null,
-              title: Text(
-                key == 'anniversaries' && row['privacyMode'] == true
-                    ? '重要日子'
-                    : '${row['name'] ?? row['content'] ?? ''}',
-              ),
-              subtitle: key == 'blueprints'
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('${row['goal'] ?? ''}'),
-                        const SizedBox(height: 6),
-                        LinearProgressIndicator(
-                          value: blueprintProgress(
-                            '${row['id']}',
-                            controller.tasks,
-                          ),
-                        ),
-                        Text(
-                          '${(blueprintProgress('${row['id']}', controller.tasks) * 100).round()}% 已完成',
-                        ),
-                      ],
-                    )
-                  : key == 'anniversaries'
-                  ? _anniversaryDetails(row)
-                  : Text(
-                      '${row['goal'] ?? row['date'] ?? row['reportDate'] ?? ''}',
+  List<Map<String, dynamic>> _processedTasks() => controller.tasks
+      .where(
+        (task) =>
+            task['status'] == 'completed' ||
+            task['status'] == 'cancelled' ||
+            task['status'] == 'postponed' ||
+            _postponements(task).isNotEmpty,
+      )
+      .toList();
+
+  Widget _processedPage(BuildContext context) {
+    final rows = _processedTasks();
+    if (rows.isEmpty) {
+      return XuEmptyState(
+        icon: Icons.inventory_2_outlined,
+        title: '暂无已处理事项',
+        description: '已完成、已取消和有顺延记录的事项会出现在这里。',
+        actionLabel: '浏览事项',
+        actionIcon: Icons.checklist_rounded,
+        onAction: () => _openTaskView('list'),
+      );
+    }
+    return Obx(() {
+      final scope = _processedScope.value;
+      final query = controller.search.value.trim();
+      final matches = rows
+          .where(
+            (task) => switch (scope) {
+              'completed' || 'cancelled' => task['status'] == scope,
+              'postponed' =>
+                task['status'] == scope || _postponements(task).isNotEmpty,
+              _ => true,
+            },
+          )
+          .toList();
+      final visible = query.isEmpty
+          ? matches
+          : matches
+                .where(
+                  (task) => ['title', 'notes', 'project', 'category'].any(
+                    (field) => '${task[field] ?? ''}'.toLowerCase().contains(
+                      query.toLowerCase(),
                     ),
-              onTap: () => key == 'blueprints'
-                  ? showBlueprintDetail(context, row)
-                  : showEditor(context, key, existing: row),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (key == 'anniversaries' &&
-                      row['preparationEnabled'] == true &&
-                      row['generatedTaskID'] == null)
-                    IconButton(
-                      icon: const Icon(Icons.playlist_add_check),
-                      tooltip: '预览准备任务',
-                      onPressed: () => showPreparationTaskPreview(context, row),
-                    ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: '删除',
-                    onPressed: () => controller.remove(key, '${row['id']}'),
                   ),
-                ],
-              ),
+                )
+                .toList();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final (value, label, icon) in const [
+                  ('all', '全部记录', Icons.inventory_2_outlined),
+                  ('completed', '已完成', Icons.check_circle_outline),
+                  ('cancelled', '已取消', Icons.cancel_outlined),
+                  ('postponed', '已顺延', Icons.update_rounded),
+                ])
+                  ChoiceChip(
+                    avatar: Icon(icon, size: 16),
+                    label: Text(label),
+                    selected: scope == value,
+                    onSelected: (_) => _processedScope.value = value,
+                  ),
+                if (query.isNotEmpty)
+                  InputChip(
+                    label: Text(
+                      query,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onDeleted: () => controller.search.value = '',
+                    deleteButtonTooltipMessage: '清除搜索',
+                  ),
+              ],
             ),
           ),
-      ],
+          const SizedBox(height: 12),
+          Expanded(
+            child: visible.isEmpty
+                ? XuEmptyState(
+                    icon: query.isEmpty
+                        ? Icons.inventory_2_outlined
+                        : Icons.search_off_rounded,
+                    title: query.isEmpty ? '此状态下暂无记录' : '没有匹配的记录',
+                    actionLabel: query.isEmpty ? '查看全部' : '清除搜索',
+                    actionIcon: query.isEmpty
+                        ? Icons.filter_list_off_rounded
+                        : Icons.close_rounded,
+                    onAction: () {
+                      if (query.isEmpty) {
+                        _processedScope.value = 'all';
+                      } else {
+                        controller.search.value = '';
+                      }
+                    },
+                  )
+                : _taskList(
+                    context,
+                    visible,
+                    empty: '暂无已处理事项',
+                    applySearch: false,
+                  ),
+          ),
+        ],
+      );
+    });
+  }
+
+  Widget _anniversaries(BuildContext context) {
+    final rows = controller.items('anniversaries');
+    if (rows.isEmpty) {
+      return XuEmptyState(
+        icon: Icons.favorite_border_rounded,
+        title: '还没有纪念日',
+        description: '记下值得纪念的日期，按需提前提醒或安排准备事项。',
+        actionLabel: '添加纪念日',
+        onAction: () => showEditor(context, 'anniversaries'),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(28, 0, 28, 24),
+      itemCount: rows.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final row = rows[index];
+        final name = row['privacyMode'] == true ? '重要日子' : '${row['name']}';
+        return Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: row['privacyMode'] == true
+                ? const XuIconTile(Icons.lock_outline_rounded)
+                : _anniversaryCover(row),
+            title: Text(name),
+            subtitle: _anniversaryDetails(row),
+            onTap: () => showEditor(context, 'anniversaries', existing: row),
+            trailing: PopupMenuButton<String>(
+              tooltip: '纪念日操作',
+              onSelected: (action) async {
+                if (action == 'edit') {
+                  await showEditor(context, 'anniversaries', existing: row);
+                } else if (action == 'preview') {
+                  await showPreparationTaskPreview(context, row);
+                } else {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (dialog) => AlertDialog(
+                      title: const Text('删除纪念日'),
+                      content: Text('确定删除“$name”？'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dialog, false),
+                          child: const Text('取消'),
+                        ),
+                        FilledButton(
+                          onPressed: () => Navigator.pop(dialog, true),
+                          child: const Text('删除'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed != true || !context.mounted) return;
+                  await _changeWorkspaceHistory(
+                    context,
+                    () => controller.remove('anniversaries', '${row['id']}'),
+                  );
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'edit', child: Text('编辑纪念日')),
+                if (row['preparationEnabled'] == true &&
+                    row['generatedTaskID'] == null)
+                  const PopupMenuItem(value: 'preview', child: Text('预览准备任务')),
+                const PopupMenuItem(value: 'delete', child: Text('删除纪念日')),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1516,14 +1730,24 @@ class HomePage extends BasePage<WorkspaceViewModel> {
       ),
       builder: (context, snapshot) {
         final next = snapshot.data;
-        final detail = snapshot.hasError
-            ? '日期计算失败'
-            : snapshot.connectionState != ConnectionState.done
-            ? '正在计算下一次日期'
-            : next == null
-            ? '已结束'
-            : '下次 ${next.year}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
-        return Text('${lunar ? '农历' : '公历'} · $detail');
+        final calendar = lunar ? '农历' : '公历';
+        if (next == null) {
+          final state = snapshot.hasError
+              ? '日期计算失败'
+              : snapshot.connectionState == ConnectionState.done
+              ? '已结束'
+              : '正在计算下一次日期';
+          return Text('$calendar · $state');
+        }
+        final now = DateTime.now();
+        final days = DateTime.utc(
+          next.year,
+          next.month,
+          next.day,
+        ).difference(DateTime.utc(now.year, now.month, now.day)).inDays;
+        final date = '${next.year}年${next.month}月${next.day}日';
+        final countdown = days == 0 ? '就是今天' : '还有 $days 天';
+        return Text('$countdown · $calendar · $date');
       },
     );
   }
@@ -1545,45 +1769,77 @@ class HomePage extends BasePage<WorkspaceViewModel> {
 
   Widget _quadrants(
     BuildContext context, {
-    List<Map<String, dynamic>>? source,
-  }) => GridView.count(
-    padding: const EdgeInsets.all(24),
-    crossAxisCount: 2,
-    childAspectRatio: 1.5,
-    children: [
-      for (var i = 1; i <= 4; i++)
-        Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  '第 $i 象限',
-                  style: Theme.of(context).textTheme.titleLarge,
+    required List<Map<String, dynamic>> source,
+  }) {
+    const quadrants = [
+      ('重要且紧急', Icons.bolt_rounded),
+      ('重要但不紧急', Icons.event_available_outlined),
+      ('紧急但不重要', Icons.schedule_rounded),
+      ('不紧急也不重要', Icons.low_priority_rounded),
+    ];
+    final grouped = <int, List<Map<String, dynamic>>>{};
+    for (final task in source) {
+      final quadrant = ((task['quadrant'] as num?)?.toInt() ?? 1).clamp(1, 4);
+      (grouped[quadrant] ??= []).add(task);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 630 ? 1 : 2;
+        return GridView.count(
+          padding: const EdgeInsets.all(12),
+          crossAxisCount: columns,
+          mainAxisExtent: 264,
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          children: [
+            for (var i = 1; i <= 4; i++)
+              Card(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 8),
+                      child: Row(
+                        children: [
+                          XuIconTile(quadrants[i - 1].$2, size: 36),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              '${quadrants[i - 1].$1} · ${grouped[i]?.length ?? 0} 项',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: grouped[i] == null
+                          ? Center(
+                              child: Text(
+                                '暂无事项',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            )
+                          : _taskList(
+                              context,
+                              grouped[i]!,
+                              applySearch: false,
+                              empty: '暂无事项',
+                            ),
+                    ),
+                  ],
                 ),
               ),
-              Expanded(
-                child: _taskList(
-                  context,
-                  (source ?? controller.tasks)
-                      .where(
-                        (t) =>
-                            t['quadrant'] == i &&
-                            (source != null || t['status'] != 'completed'),
-                      )
-                      .toList(),
-                  empty: '暂无事项',
-                ),
-              ),
-            ],
-          ),
-        ),
-    ],
-  );
-  Widget _calendar(BuildContext context) {
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _calendar(BuildContext context, {required bool compact}) {
     return CalendarPage(
       tasks: controller.tasks,
+      compact: compact,
       onEditTask: (task) => showEditor(context, 'tasks', existing: task),
       onAddTask: (day) => showEditor(
         context,
@@ -1616,8 +1872,7 @@ class HomePage extends BasePage<WorkspaceViewModel> {
             .items('categories')
             .where((item) => item['name'] == name)
             .firstOrNull;
-        return categorySymbols['${row?['symbol'] ?? 'label'}']?.$2 ??
-            Icons.label_outline;
+        return categoryIconFor('${row?['symbol'] ?? 'label'}').$2;
       }
 
       var selection = _categorySelection.value;
@@ -1671,25 +1926,6 @@ class HomePage extends BasePage<WorkspaceViewModel> {
         'tasks',
         defaults: {'category': selection == '\u0000all' ? '' : selection},
       );
-
-      Future<void> addCategory() async {
-        final name = _newCategoryName.value.trim();
-        if (name.isEmpty || _categorySaving.value) return;
-        _categorySaving.value = true;
-        try {
-          await controller.addCategory(name);
-          _categorySelection.value = name;
-          _newCategoryName.value = '';
-          _categoryInputRevision.value++;
-        } catch (error) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text('$error')));
-          }
-        } finally {
-          _categorySaving.value = false;
-        }
-      }
 
       Future<void> editCategory(String action) async {
         if (selection == '\u0000all' || selection.isEmpty) return;
@@ -1822,37 +2058,6 @@ class HomePage extends BasePage<WorkspaceViewModel> {
             const SizedBox(height: 10),
             for (final name in categoryNames)
               categoryOption(name, name, categoryIcon(name)),
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            const SizedBox(height: 16),
-            Text('添加类别', style: Theme.of(context).textTheme.labelMedium),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: ValueKey(_categoryInputRevision.value),
-                    decoration: const InputDecoration(
-                      hintText: '输入类别名称…',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: (value) => _newCategoryName.value = value,
-                    onSubmitted: (_) => addCategory(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filledTonal(
-                  tooltip: '添加类别',
-                  onPressed:
-                      _newCategoryName.value.trim().isEmpty ||
-                          _categorySaving.value
-                      ? null
-                      : addCategory,
-                  icon: const Icon(Icons.add),
-                ),
-              ],
-            ),
           ],
         ),
       );
@@ -1902,10 +2107,7 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                           tooltip: '管理类别',
                           onSelected: editCategory,
                           itemBuilder: (_) => const [
-                            PopupMenuItem(
-                              value: 'rename',
-                              child: Text('重命名类别'),
-                            ),
+                            PopupMenuItem(value: 'rename', child: Text('编辑分类')),
                             PopupMenuItem(value: 'delete', child: Text('删除类别')),
                           ],
                         ),
@@ -1973,15 +2175,6 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                           : _categoryScope.value == 'active'
                           ? '新建一项任务，或切换状态查看已有记录。'
                           : '切换状态查看其他任务。',
-                      actionLabel: tasks.isEmpty && categoryNames.isEmpty
-                          ? '新建类别'
-                          : '新建任务',
-                      onAction: tasks.isEmpty && categoryNames.isEmpty
-                          ? () async {
-                              final name = await showCategoryEditor(context);
-                              if (name != null) _categorySelection.value = name;
-                            }
-                          : createTask,
                     )
                   : _taskList(
                       context,
@@ -2003,31 +2196,18 @@ class HomePage extends BasePage<WorkspaceViewModel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '—  O R G A N I Z E   Y O U R   W O R K',
-                  style: Theme.of(context).textTheme.labelSmall
-                      ?.copyWith(color: scheme.primary),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '任务分类',
-                            style: Theme.of(context).textTheme.headlineMedium,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            '把相近的事放在一起，让每一步都更清晰。',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
+                XuPageHeader(
+                  title: '任务分类',
+                  description: '按类别查看事项与进度。',
+                  actions: [
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final name = await showCategoryEditor(context);
+                        if (name != null) _categorySelection.value = name;
+                      },
+                      icon: const Icon(Icons.new_label_outlined),
+                      label: const Text('新建分类'),
                     ),
-                    const SizedBox(width: 12),
                     FilledButton.icon(
                       onPressed: createTask,
                       icon: const Icon(Icons.add),
@@ -2035,7 +2215,7 @@ class HomePage extends BasePage<WorkspaceViewModel> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
                 if (compact) ...[
                   categoryPanel,
                   const SizedBox(height: 20),
@@ -2058,313 +2238,480 @@ class HomePage extends BasePage<WorkspaceViewModel> {
   }
 
   Widget _settings(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(28),
+    padding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
     children: [
-      const Text('外观'),
-      OutlinedButton.icon(
-        onPressed: () async {
-          try {
-            final opened = await NativeBridge.openWidget();
-            if (opened != true) throw StateError('桌面小组件未能打开');
-            controller.widgetStatus.value = '桌面小组件已打开';
-            if (context.mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(const SnackBar(content: Text('桌面小组件已打开')));
-            }
-          } catch (error) {
-            controller.widgetStatus.value = '桌面小组件打开失败：$error';
-            if (context.mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('$error')));
-            }
-          }
-        },
-        icon: const Icon(Icons.widgets_outlined),
-        label: const Text('打开桌面小组件'),
-      ),
-      if (controller.widgetStatus.value.isNotEmpty)
-        Text(controller.widgetStatus.value),
-      SegmentedButton<ThemeMode>(
-        segments: const [
-          ButtonSegment(value: ThemeMode.system, label: Text('跟随系统')),
-          ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
-          ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
-        ],
-        selected: {controller.themeMode.value},
-        onSelectionChanged: (value) => controller.setThemeMode(value.first),
-      ),
-      const SizedBox(height: 24),
-      const Text('提醒'),
-      SwitchListTile(
-        title: const Text('每日复盘提醒'),
-        value: controller.dailyReviewEnabled.value,
-        onChanged: (enabled) async {
-          try {
-            await controller.setDailyReview(
-              enabled,
-              controller.dailyReviewHour.value,
-            );
-          } catch (error) {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('$error')));
-            }
-          }
-        },
-      ),
-      if (controller.dailyReviewEnabled.value)
-        DropdownButtonFormField<int>(
-          initialValue: controller.dailyReviewHour.value,
-          decoration: const InputDecoration(labelText: '提醒时间'),
-          items: [
-            for (var hour = 6; hour <= 23; hour++)
-              DropdownMenuItem(
-                value: hour,
-                child: Text('${hour.toString().padLeft(2, '0')}:00'),
-              ),
-          ],
-          onChanged: (hour) async {
-            if (hour != null) await controller.setDailyReview(true, hour);
-          },
-        ),
-      const SizedBox(height: 24),
-      const Text('DeepSeek API Key'),
-      OutlinedButton(
-        onPressed: () async {
-          final current = await NativeBridge.readApiKey() ?? '';
-          final input = TextEditingController(text: current);
-          if (!context.mounted) return;
-          await showDialog<void>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('DeepSeek API Key'),
-              content: TextField(controller: input, obscureText: true),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('取消'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    await NativeBridge.writeApiKey(input.text.trim());
-                    if (dialogContext.mounted) Navigator.pop(dialogContext);
-                  },
-                  child: const Text('保存'),
-                ),
-              ],
-            ),
-          );
-          input.dispose();
-        },
-        child: const Text('设置 API Key'),
-      ),
-      const SizedBox(height: 24),
-      const Text('应用更新'),
-      OutlinedButton(
-        onPressed: () async {
-          try {
-            final version = await NativeBridge.appVersion() ?? '0.0.0';
-            final update = await UpdateService.check(version);
-            if (!context.mounted) return;
-            await showDialog<void>(
-              context: context,
-              builder: (dialog) {
-                var downloading = false;
-                return StatefulBuilder(
-                  builder: (dialog, setDialogState) {
-                    return AlertDialog(
-                      title: Text(
-                        update == null ? '已是最新版本' : '发现版本 ${update.version}',
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          XuSectionCard(
+            title: '外观',
+            icon: Icons.contrast_rounded,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.system,
+                        label: Text('跟随系统'),
                       ),
-                      content: SizedBox(
-                        width: 460,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              update == null ? '当前版本：$version' : update.notes,
-                            ),
-                            if (downloading) ...[
-                              const SizedBox(height: 16),
-                              const LinearProgressIndicator(),
-                              const SizedBox(height: 8),
-                              const Text('正在下载并校验 DMG…'),
-                            ],
-                          ],
-                        ),
+                      ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
+                      ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
+                    ],
+                    selected: {controller.themeMode.value},
+                    onSelectionChanged: (value) =>
+                        controller.setThemeMode(value.first),
+                  ),
+                  if (!_mobilePlatform)
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        try {
+                          final opened = await NativeBridge.openWidget();
+                          if (opened != true) throw StateError('桌面小组件未能打开');
+                          controller.widgetStatus.value = '桌面小组件已打开';
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('桌面小组件已打开')),
+                            );
+                          }
+                        } catch (error) {
+                          controller.widgetStatus.value = '桌面小组件打开失败：$error';
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('$error')));
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.widgets_outlined),
+                      label: const Text('打开桌面小组件'),
+                    ),
+                ],
+              ),
+              if (controller.widgetStatus.value.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(controller.widgetStatus.value),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          XuSectionCard(
+            title: '提醒',
+            icon: Icons.notifications_outlined,
+            children: [
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('每日复盘提醒'),
+                value: controller.dailyReviewEnabled.value,
+                onChanged: (enabled) async {
+                  try {
+                    await controller.setDailyReview(
+                      enabled,
+                      controller.dailyReviewHour.value,
+                    );
+                  } catch (error) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text('$error')));
+                    }
+                  }
+                },
+              ),
+              if (controller.dailyReviewEnabled.value)
+                DropdownButtonFormField<int>(
+                  initialValue: controller.dailyReviewHour.value,
+                  decoration: const InputDecoration(labelText: '提醒时间'),
+                  items: [
+                    for (var hour = 6; hour <= 23; hour++)
+                      DropdownMenuItem(
+                        value: hour,
+                        child: Text('${hour.toString().padLeft(2, '0')}:00'),
+                      ),
+                  ],
+                  onChanged: (hour) async {
+                    if (hour != null) {
+                      await controller.setDailyReview(true, hour);
+                    }
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          XuSectionCard(
+            title: 'AI 服务',
+            icon: Icons.auto_awesome_outlined,
+            children: [
+              const Text('配置 DeepSeek 后，可生成事项、蓝图和日报草稿。'),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final current = await NativeBridge.readApiKey() ?? '';
+                  var input = current;
+                  if (!context.mounted) return;
+                  await showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
+                      title: const Text('DeepSeek API Key'),
+                      content: TextFormField(
+                        initialValue: current,
+                        obscureText: true,
+                        onChanged: (value) => input = value,
                       ),
                       actions: [
                         TextButton(
-                          onPressed: downloading
-                              ? null
-                              : () => Navigator.pop(dialog),
-                          child: const Text('关闭'),
+                          onPressed: () => Navigator.pop(dialogContext),
+                          child: const Text('取消'),
                         ),
-                        if (update != null)
-                          FilledButton(
-                            onPressed: downloading
-                                ? null
-                                : () async {
-                                    setDialogState(() => downloading = true);
-                                    try {
-                                      final dmg =
-                                          await UpdateService.downloadAndVerify(
-                                            update,
-                                          );
-                                      final opened =
-                                          await NativeBridge.openVerifiedUpdate(
-                                            dmg.path,
-                                          );
-                                      if (opened != true) {
-                                        throw StateError('系统未能打开已校验的更新包');
-                                      }
-                                      if (dialog.mounted) Navigator.pop(dialog);
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  '更新包已通过校验，请在打开的磁盘映像中替换应用',
-                                                ),
-                                              ),
-                                            );
-                                      }
-                                    } catch (error) {
-                                      if (dialog.mounted) {
-                                        setDialogState(
-                                          () => downloading = false,
-                                        );
-                                      }
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              SnackBar(content: Text('$error')),
-                                            );
-                                      }
-                                    }
-                                  },
-                            child: const Text('下载并安装'),
-                          ),
+                        FilledButton(
+                          onPressed: () async {
+                            await NativeBridge.writeApiKey(input.trim());
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                            }
+                          },
+                          child: const Text('保存'),
+                        ),
                       ],
-                    );
-                  },
-                );
-              },
-            );
-          } catch (error) {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('$error')));
-            }
-          }
-        },
-        child: const Text('检查更新'),
-      ),
-      const SizedBox(height: 24),
-      const Text('数据'),
-      Wrap(
-        spacing: 12,
-        children: [
-          OutlinedButton(
-            onPressed: () async {
-              await FilePicker.saveFile(
-                dialogTitle: '导出数据',
-                fileName: '序-备份.json',
-                bytes: Uint8List.fromList(
-                  utf8.encode(
-                    const JsonEncoder.withIndent('  ')
-                        .convert(controller.repository.snapshot()),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.key_outlined),
+                label: const Text('设置 API Key'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_mobilePlatform)
+            XuSectionCard(
+              title: '关于序',
+              icon: Icons.info_outline_rounded,
+              children: [
+                FutureBuilder<String?>(
+                  future: NativeBridge.appVersion(),
+                  builder: (context, snapshot) => Text(
+                    snapshot.hasData
+                        ? '版本 ${snapshot.data}'
+                        : snapshot.hasError
+                        ? '版本信息暂不可用'
+                        : '正在读取版本信息',
                   ),
                 ),
-              );
-            },
-            child: const Text('导出 JSON 备份'),
-          ),
-          OutlinedButton(
-            onPressed: () async {
-              final result = await FilePicker.pickFiles(
-                type: FileType.custom,
-                allowedExtensions: ['json'],
-              );
-              if (result.isNotEmpty && result.single.path != null) {
-                await controller.importWorkspace(result.single.path!);
-              }
-            },
-            child: const Text('导入 JSON 备份'),
-          ),
-          OutlinedButton(
-            onPressed: () async {
-              try {
-                final resolving = controller.syncStatus.value.startsWith(
-                  '同步冲突',
-                );
-                final conflict = resolving
-                    ? await controller.syncFolder(
-                        controller.syncFolderPath.value,
-                      )
-                    : await controller.selectAndSyncFolder();
-                final folder = controller.syncFolderPath.value;
-                if (folder.isEmpty) return;
-                if (conflict == null || !context.mounted) return;
-                final choice = await showDialog<SyncChoice>(
-                  context: context,
-                  builder: (dialog) => AlertDialog(
-                    title: const Text('同步文件存在差异'),
-                    content: const Text('请选择要保留的数据，或按 ID 合并两侧记录。'),
-                    actions: [
-                      TextButton(
-                        onPressed: () =>
-                            Navigator.pop(dialog, SyncChoice.useRemote),
-                        child: const Text('使用文件夹数据'),
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            Navigator.pop(dialog, SyncChoice.keepLocal),
-                        child: const Text('使用本机数据'),
-                      ),
-                      FilledButton(
-                        onPressed: () =>
-                            Navigator.pop(dialog, SyncChoice.merge),
-                        child: const Text('合并'),
-                      ),
-                    ],
-                  ),
-                );
-                if (choice != null) {
-                  await controller.syncFolder(folder, choice: choice);
-                  controller.syncStatus.value = '同步冲突已解决';
-                }
-              } catch (error) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text('$error')));
-                }
-              }
-            },
-            child: Obx(
-              () => Text(
-                controller.syncStatus.value.startsWith('同步冲突')
-                    ? '解决同步冲突'
-                    : '选择同步文件夹',
-              ),
+              ],
+            )
+          else
+            XuSectionCard(
+              title: '应用更新',
+              icon: Icons.system_update_alt_rounded,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final version =
+                          await NativeBridge.appVersion() ?? '0.0.0';
+                      final update = await UpdateService.check(version);
+                      if (!context.mounted) return;
+                      await showDialog<void>(
+                        context: context,
+                        builder: (dialog) {
+                          var downloading = false;
+                          return StatefulBuilder(
+                            builder: (dialog, setDialogState) {
+                              return AlertDialog(
+                                title: Text(
+                                  update == null
+                                      ? '已是最新版本'
+                                      : '发现版本 ${update.version}',
+                                ),
+                                content: SizedBox(
+                                  width: 460,
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        update == null
+                                            ? '当前版本：$version'
+                                            : update.notes,
+                                      ),
+                                      if (downloading) ...[
+                                        const SizedBox(height: 16),
+                                        const LinearProgressIndicator(),
+                                        const SizedBox(height: 8),
+                                        const Text('正在下载并校验 DMG…'),
+                                      ],
+                                    ],
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: downloading
+                                        ? null
+                                        : () => Navigator.pop(dialog),
+                                    child: const Text('关闭'),
+                                  ),
+                                  if (update != null)
+                                    FilledButton(
+                                      onPressed: downloading
+                                          ? null
+                                          : () async {
+                                              setDialogState(
+                                                () => downloading = true,
+                                              );
+                                              try {
+                                                final dmg =
+                                                    await UpdateService.downloadAndVerify(
+                                                      update,
+                                                    );
+                                                final opened =
+                                                    await NativeBridge.openVerifiedUpdate(
+                                                      dmg.path,
+                                                    );
+                                                if (opened != true) {
+                                                  throw StateError(
+                                                    '系统未能打开已校验的更新包',
+                                                  );
+                                                }
+                                                if (dialog.mounted) {
+                                                  Navigator.pop(dialog);
+                                                }
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            '更新包已通过校验，请在打开的磁盘映像中替换应用',
+                                                          ),
+                                                        ),
+                                                      );
+                                                }
+                                              } catch (error) {
+                                                if (dialog.mounted) {
+                                                  setDialogState(
+                                                    () => downloading = false,
+                                                  );
+                                                }
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text('$error'),
+                                                    ),
+                                                  );
+                                                }
+                                              }
+                                            },
+                                      child: const Text('下载并安装'),
+                                    ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      );
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('$error')));
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('检查更新'),
+                ),
+              ],
             ),
+          const SizedBox(height: 12),
+          XuSectionCard(
+            title: '数据与同步',
+            icon: Icons.storage_rounded,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: () async {
+                      await FilePicker.saveFile(
+                        dialogTitle: '导出数据',
+                        fileName: '序-备份.json',
+                        bytes: Uint8List.fromList(
+                          utf8.encode(
+                            const JsonEncoder.withIndent('  ')
+                                .convert(controller.repository.snapshot()),
+                          ),
+                        ),
+                      );
+                    },
+                    child: const Text('导出 JSON 备份'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () async {
+                      try {
+                        final snapshot = await _pickJsonFile();
+                        if (snapshot == null) return;
+                        await controller.importWorkspace(snapshot);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('备份已导入')),
+                          );
+                        }
+                      } catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('备份导入失败：$error')),
+                          );
+                        }
+                      }
+                    },
+                    child: const Text('导入 JSON 备份'),
+                  ),
+                  OutlinedButton(
+                    onPressed: () async {
+                      try {
+                        final resolving = controller.syncStatus.value
+                            .startsWith('同步冲突');
+                        final conflict = resolving
+                            ? await controller.syncFolder(
+                                controller.syncFolderPath.value,
+                              )
+                            : await controller.selectAndSyncFolder();
+                        final folder = controller.syncFolderPath.value;
+                        if (folder.isEmpty) return;
+                        if (conflict == null || !context.mounted) return;
+                        final choice = await showDialog<SyncChoice>(
+                          context: context,
+                          builder: (dialog) => AlertDialog(
+                            title: const Text('同步文件存在差异'),
+                            content: const Text('请选择要保留的数据，或按 ID 合并两侧记录。'),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialog, SyncChoice.useRemote),
+                                child: const Text('使用文件夹数据'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialog, SyncChoice.keepLocal),
+                                child: const Text('使用本机数据'),
+                              ),
+                              FilledButton(
+                                onPressed: () =>
+                                    Navigator.pop(dialog, SyncChoice.merge),
+                                child: const Text('合并'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (choice != null) {
+                          await controller.syncFolder(folder, choice: choice);
+                          controller.syncStatus.value = '同步冲突已解决';
+                        }
+                      } catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(content: Text('$error')));
+                        }
+                      }
+                    },
+                    child: Obx(
+                      () => Text(
+                        controller.syncStatus.value.startsWith('同步冲突')
+                            ? '解决同步冲突'
+                            : '选择同步文件夹',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Obx(
+                () => Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    controller.syncStatus.value.isEmpty
+                        ? (controller.syncFolderPath.value.isEmpty
+                              ? '未设置自动同步文件夹'
+                              : '自动同步已启用：${controller.syncFolderPath.value}')
+                        : controller.syncStatus.value,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
-      Obx(
-        () => Text(
-          controller.syncStatus.value.isEmpty
-              ? (controller.syncFolderPath.value.isEmpty
-                    ? '未设置自动同步文件夹'
-                    : '自动同步已启用：${controller.syncFolderPath.value}')
-              : controller.syncStatus.value,
-        ),
-      ),
-      const SizedBox(height: 12),
-      const Text('Flutter 数据格式 v1；旧版 SwiftData 数据不会自动导入。'),
     ],
   );
+}
+
+class _TaskSearchField extends StatefulWidget {
+  const _TaskSearchField({required this.value, required this.onChanged});
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_TaskSearchField> createState() => _TaskSearchFieldState();
+}
+
+class _TaskSearchFieldState extends State<_TaskSearchField> {
+  late final input = TextEditingController(text: widget.value);
+
+  @override
+  void didUpdateWidget(covariant _TaskSearchField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != input.text) {
+      input.value = TextEditingValue(
+        text: widget.value,
+        selection: TextSelection.collapsed(offset: widget.value.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    controller: input,
+    decoration: InputDecoration(
+      prefixIcon: const Icon(Icons.search_rounded),
+      hintText: '搜索事项',
+      border: InputBorder.none,
+      suffixIcon: widget.value.isEmpty
+          ? null
+          : IconButton(
+              tooltip: '清除搜索',
+              onPressed: () => widget.onChanged(''),
+              icon: const Icon(Icons.close_rounded),
+            ),
+    ),
+    onChanged: widget.onChanged,
+  );
+}
+
+Future<void> _changeWorkspaceHistory(
+  BuildContext context,
+  Future<void> Function() action,
+) async {
+  try {
+    await action();
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
 }
 
 class _AddIntent extends Intent {
@@ -2443,6 +2790,45 @@ Future<void> showPreparationTaskPreview(
   );
 }
 
+List<Map> _postponements(Map<String, dynamic> task) =>
+    (task['postponements'] as List? ?? []).whereType<Map>().toList();
+
+String _planDateLabel(Object? value) {
+  final date = CalendarPlanLogic.parse(value);
+  return date == null ? '未安排' : '${date.year}年${date.month}月${date.day}日';
+}
+
+Future<void> _showPostponements(
+  BuildContext context,
+  Map<String, dynamic> task,
+) => showDialog<void>(
+  context: context,
+  builder: (dialog) => AlertDialog(
+    title: Text('${task['title']} · 延期记录'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final entry in _postponements(task).reversed)
+            ListTile(
+              title: Text(
+                '${_planDateLabel(entry['from'])} → ${_planDateLabel(entry['to'])}',
+              ),
+              subtitle: Text(_planDateLabel(entry['changedAt'])),
+            ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(dialog),
+        child: const Text('关闭'),
+      ),
+    ],
+  ),
+);
+
 Future<void> showEditor(
   BuildContext context,
   String section, {
@@ -2450,22 +2836,24 @@ Future<void> showEditor(
   Map<String, dynamic>? defaults,
 }) async {
   final vm = Get.find<WorkspaceViewModel>();
-  final title = TextEditingController(
-    text: '${existing?['title'] ?? existing?['name'] ?? ''}',
-  );
-  final notes = TextEditingController(
-    text:
-        '${existing?['notes'] ?? existing?['goal'] ?? existing?['content'] ?? ''}',
-  );
-  final category = TextEditingController(
-    text: '${existing?['category'] ?? defaults?['category'] ?? ''}',
-  );
-  final project = TextEditingController(text: '${existing?['project'] ?? ''}');
-  final contact = TextEditingController(text: '${existing?['contact'] ?? ''}');
-  final preparationTitle = TextEditingController(
-    text: '${existing?['preparationTaskTitle'] ?? ''}',
-  );
+  var title = '${existing?['title'] ?? existing?['name'] ?? ''}';
+  var notes =
+      '${existing?['notes'] ?? existing?['goal'] ?? existing?['content'] ?? ''}';
+  var category = '${existing?['category'] ?? defaults?['category'] ?? ''}';
+  var project = '${existing?['project'] ?? ''}';
+  var contact = '${existing?['contact'] ?? ''}';
+  var preparationTitle = '${existing?['preparationTaskTitle'] ?? ''}';
+  var saving = false;
   String reportCategory = '${existing?['reportCategory'] ?? 'projectProgress'}';
+  var estimateText = '${existing?['estimatedMinutes'] ?? ''}';
+  var remainingText = '${existing?['remainingMinutes'] ?? ''}';
+  var deadline = CalendarPlanLogic.parse(existing?['dueDate']);
+  var planLocked = existing == null
+      ? false
+      : CalendarPlanLogic.isLocked(existing);
+  var calendarAutoSync =
+      (existing?['calendarAutoSync'] ?? defaults?['calendarAutoSync']) == true;
+  String? saveError;
   int quadrant = (existing?['quadrant'] as int?) ?? 1;
   bool repeatYearly = existing?['repeatYearly'] != false;
   bool notificationEnabled = existing?['notificationEnabled'] == true;
@@ -2481,12 +2869,35 @@ Future<void> showEditor(
       (existing?['preparationLeadDays'] as num?)?.toInt() ?? 7;
   String blueprintId =
       '${existing?['blueprintID'] ?? defaults?['blueprintID'] ?? ''}';
+  var stageId = '${existing?['stageID'] ?? defaults?['stageID'] ?? ''}';
+  var milestoneId =
+      '${existing?['milestoneID'] ?? defaults?['milestoneID'] ?? ''}';
+  if (!vm.items('blueprints').any((row) => row['id'] == blueprintId)) {
+    blueprintId = '';
+  }
+  if (!vm
+      .items('stages')
+      .any(
+        (row) => row['id'] == stageId && row['blueprintID'] == blueprintId,
+      )) {
+    stageId = '';
+  }
+  if (!vm
+      .items('milestones')
+      .any(
+        (row) =>
+            row['id'] == milestoneId &&
+            row['blueprintID'] == blueprintId &&
+            '${row['stageID'] ?? ''}' == stageId,
+      )) {
+    milestoneId = '';
+  }
   final dependencyIds = List<String>.from(
     (existing?['dependencyIDs'] as List?)?.map((e) => '$e') ?? [],
   );
   DateTime date =
       DateTime.tryParse(
-        '${existing?['scheduledFor'] ?? existing?['date'] ?? defaults?['scheduledFor'] ?? ''}',
+        '${existing?['scheduledFor'] ?? existing?['dueDate'] ?? existing?['date'] ?? defaults?['scheduledFor'] ?? ''}',
       ) ??
       DateTime.now();
   Map<String, dynamic>? timeBlock = switch (existing?['timeBlock'] ??
@@ -2522,19 +2933,85 @@ Future<void> showEditor(
         content: SizedBox(
           width: 480,
           child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (saveError != null)
+                  Text(
+                    saveError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 if (section != 'reports')
-                  TextField(
-                    controller: title,
+                  TextFormField(
+                    initialValue: title,
+                    onChanged: (value) => title = value,
                     autofocus: true,
                     decoration: InputDecoration(
                       labelText: section == 'tasks' ? '标题' : '名称',
                     ),
                   ),
-                TextField(
-                  controller: notes,
+                if (section == 'tasks')
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('计划日期'),
+                    value: hasPlanDate,
+                    onChanged: (value) => setState(() => hasPlanDate = value),
+                  ),
+                if (section == 'tasks' && hasPlanDate)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('同步到系统日历'),
+                    value: calendarAutoSync,
+                    onChanged: (value) =>
+                        setState(() => calendarAutoSync = value),
+                  ),
+                if (hasPlanDate)
+                  Row(
+                    children: [
+                      Text('日期：${date.toString().split(' ').first}'),
+                      IconButton(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                            initialDate: date,
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              final plan = <String, dynamic>{
+                                'timeBlock': timeBlock,
+                              };
+                              CalendarPlanLogic.reschedule(plan, picked);
+                              timeBlock =
+                                  plan['timeBlock'] as Map<String, dynamic>?;
+                              date = picked;
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.date_range),
+                      ),
+                    ],
+                  ),
+                if (section == 'tasks' && hasPlanDate && timeBlock != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('执行时间块'),
+                    subtitle: Text(
+                      '${DateTime.tryParse('${timeBlock!['start']}')?.toLocal().toString().substring(0, 16) ?? ''}–${DateTime.tryParse('${timeBlock!['end']}')?.toLocal().toString().substring(11, 16) ?? ''}',
+                    ),
+                    trailing: IconButton(
+                      tooltip: '移除执行时间块',
+                      onPressed: () => setState(() => timeBlock = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                TextFormField(
+                  initialValue: notes,
+                  onChanged: (value) => notes = value,
                   maxLines: section == 'reports' ? 8 : 3,
                   decoration: InputDecoration(
                     labelText: section == 'tasks'
@@ -2545,12 +3022,100 @@ Future<void> showEditor(
                   ),
                 ),
                 if (section == 'tasks') ...[
-                  TextField(
-                    controller: project,
+                  if (existing != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.image_outlined),
+                        label: const Text('管理任务参考图'),
+                        onPressed: () {
+                          final current = vm.tasks
+                              .where((task) => task['id'] == existing['id'])
+                              .firstOrNull;
+                          if (current != null) {
+                            editBlueprintImages(context, vm, 'tasks', current);
+                          }
+                        },
+                      ),
+                    ),
+                  if (existing != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.account_tree_outlined),
+                        onPressed: () =>
+                            showBlueprintForTask(context, existing),
+                        label: const Text('在蓝图中查看'),
+                      ),
+                    ),
+                  if (blueprintId.isNotEmpty) ...[
+                    TextFormField(
+                      initialValue: estimateText,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: '预计工时（分钟）'),
+                      onChanged: (value) => estimateText = value.trim(),
+                    ),
+                    if (existing?['status'] == 'inProgress')
+                      TextFormField(
+                        initialValue: remainingText,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: '剩余工时（分钟）',
+                        ),
+                        onChanged: (value) => remainingText = value.trim(),
+                      ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        deadline == null
+                            ? '截止日期'
+                            : '截止 · ${_planDateLabel(deadline!.toIso8601String())}',
+                      ),
+                      subtitle: deadline == null ? const Text('未设置') : null,
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: deadline ?? date,
+                          firstDate: DateTime(1900),
+                          lastDate: DateTime(2200),
+                        );
+                        if (picked != null && context.mounted) {
+                          setState(
+                            () => deadline = DateTime(
+                              picked.year,
+                              picked.month,
+                              picked.day,
+                              23,
+                              59,
+                              59,
+                            ),
+                          );
+                        }
+                      },
+                      trailing: deadline == null
+                          ? const Icon(Icons.event_outlined)
+                          : IconButton(
+                              tooltip: '移除截止日期',
+                              icon: const Icon(Icons.close),
+                              onPressed: () => setState(() => deadline = null),
+                            ),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('固定安排'),
+                      value: planLocked,
+                      onChanged: (value) => setState(() => planLocked = value),
+                    ),
+                  ],
+
+                  TextFormField(
+                    initialValue: project,
+                    onChanged: (value) => project = value,
                     decoration: const InputDecoration(labelText: '项目'),
                   ),
-                  TextField(
-                    controller: category,
+                  TextFormField(
+                    initialValue: category,
+                    onChanged: (value) => category = value,
                     decoration: const InputDecoration(labelText: '分类'),
                   ),
                   DropdownButtonFormField<String>(
@@ -2591,36 +3156,93 @@ Future<void> showEditor(
                     ],
                     onChanged: (value) => setState(() {
                       blueprintId = value ?? '';
+                      stageId = '';
+                      milestoneId = '';
                       dependencyIds.clear();
                     }),
                   ),
-                  if (blueprintId.isNotEmpty) ...[
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('前置任务'),
-                    ),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final task in vm.tasks.where(
-                          (task) =>
-                              task['blueprintID'] == blueprintId &&
-                              task['id'] != existing?['id'],
-                        ))
-                          FilterChip(
-                            label: Text('${task['title']}'),
-                            selected: dependencyIds.contains('${task['id']}'),
-                            onSelected: (selected) => setState(() {
-                              if (selected) {
-                                dependencyIds.add('${task['id']}');
-                              } else {
-                                dependencyIds.remove('${task['id']}');
-                              }
-                            }),
+                ],
+                if ((section == 'tasks' || section == 'milestones') &&
+                    blueprintId.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    key: ValueKey(('stage', blueprintId)),
+                    initialValue: stageId,
+                    decoration: const InputDecoration(labelText: '阶段'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('无阶段')),
+                      for (final row
+                          in vm
+                              .items('stages')
+                              .where(
+                                (row) => row['blueprintID'] == blueprintId,
+                              ))
+                        DropdownMenuItem(
+                          value: '${row['id']}',
+                          child: Text(
+                            '${row['name']}',
+                            overflow: TextOverflow.ellipsis,
                           ),
-                      ],
-                    ),
-                  ],
+                        ),
+                    ],
+                    isExpanded: true,
+                    onChanged: (value) => setState(() {
+                      stageId = value ?? '';
+                      milestoneId = '';
+                    }),
+                  ),
+                if (section == 'tasks' && blueprintId.isNotEmpty) ...[
+                  DropdownButtonFormField<String>(
+                    key: ValueKey(('milestone', blueprintId, stageId)),
+                    initialValue: milestoneId,
+                    decoration: const InputDecoration(labelText: '里程碑'),
+                    items: [
+                      const DropdownMenuItem(value: '', child: Text('无里程碑')),
+                      for (final row
+                          in vm
+                              .items('milestones')
+                              .where(
+                                (row) =>
+                                    row['blueprintID'] == blueprintId &&
+                                    '${row['stageID'] ?? ''}' == stageId,
+                              ))
+                        DropdownMenuItem(
+                          value: '${row['id']}',
+                          child: Text(
+                            '${row['name']}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    isExpanded: true,
+                    onChanged: (value) =>
+                        setState(() => milestoneId = value ?? ''),
+                  ),
+
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('前置任务'),
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final task in vm.tasks.where(
+                        (task) =>
+                            task['blueprintID'] == blueprintId &&
+                            task['id'] != existing?['id'],
+                      ))
+                        FilterChip(
+                          label: Text('${task['title']}'),
+                          selected: dependencyIds.contains('${task['id']}'),
+                          onSelected: (selected) => setState(() {
+                            if (selected) {
+                              dependencyIds.add('${task['id']}');
+                            } else {
+                              dependencyIds.remove('${task['id']}');
+                            }
+                          }),
+                        ),
+                    ],
+                  ),
                 ],
                 if (section == 'anniversaries') ...[
                   Row(
@@ -2638,19 +3260,20 @@ Future<void> showEditor(
                         ),
                       TextButton.icon(
                         onPressed: () async {
-                          final picked = await FilePicker.pickFiles(
-                            type: FileType.image,
-                          );
-                          if (picked.isEmpty) return;
                           try {
-                            final file = picked.single;
+                            final file = await FilePicker.pickFile(
+                              type: FileType.image,
+                            );
+                            if (file == null || !context.mounted) return;
                             if ((file.lengthSync() ?? 0) >
                                 anniversaryCoverMaxBytes) {
                               throw const FormatException('封面图片须小于 5 MB');
                             }
                             final bytes = await file.readAsBytes();
                             final encoded = encodeAnniversaryCover(bytes);
-                            setState(() => coverImage = encoded);
+                            if (context.mounted) {
+                              setState(() => coverImage = encoded);
+                            }
                           } catch (error) {
                             if (context.mounted) {
                               ScaffoldMessenger.of(
@@ -2685,8 +3308,9 @@ Future<void> showEditor(
                     ],
                     onChanged: (value) => anniversaryType = value ?? 'custom',
                   ),
-                  TextField(
-                    controller: contact,
+                  TextFormField(
+                    initialValue: contact,
+                    onChanged: (value) => contact = value,
                     decoration: const InputDecoration(labelText: '联系人（可选）'),
                   ),
                   DropdownButtonFormField<String>(
@@ -2733,11 +3357,13 @@ Future<void> showEditor(
                     value: showOnHome,
                     onChanged: (value) => setState(() => showOnHome = value),
                   ),
-                  SwitchListTile(
-                    title: const Text('显示在菜单栏'),
-                    value: showInMenuBar,
-                    onChanged: (value) => setState(() => showInMenuBar = value),
-                  ),
+                  if (!_mobilePlatform)
+                    SwitchListTile(
+                      title: const Text('显示在菜单栏'),
+                      value: showInMenuBar,
+                      onChanged: (value) =>
+                          setState(() => showInMenuBar = value),
+                    ),
                   SwitchListTile(
                     title: const Text('隐私模式（隐藏名称）'),
                     value: privacyMode,
@@ -2775,8 +3401,9 @@ Future<void> showEditor(
                             setState(() => preparationLeadDays = value.round()),
                       ),
                     ),
-                    TextField(
-                      controller: preparationTitle,
+                    TextFormField(
+                      initialValue: preparationTitle,
+                      onChanged: (value) => preparationTitle = value,
                       decoration: const InputDecoration(
                         labelText: '准备任务名称（可选）',
                       ),
@@ -2784,180 +3411,163 @@ Future<void> showEditor(
                     const Text('应用只展示预览，确认后才会创建事项。'),
                   ],
                 ],
-                if (section == 'tasks')
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('计划日期'),
-                    value: hasPlanDate,
-                    onChanged: (value) => setState(() => hasPlanDate = value),
-                  ),
-                if (hasPlanDate)
-                  Row(
-                    children: [
-                      Text('日期：${date.toString().split(' ').first}'),
-                      IconButton(
-                        onPressed: () async {
-                          final picked = await showDatePicker(
-                            context: context,
-                            firstDate: DateTime(2000),
-                            lastDate: DateTime(2100),
-                            initialDate: date,
-                          );
-                          if (picked != null) {
-                            setState(() {
-                              final start = DateTime.tryParse(
-                                '${timeBlock?['start']}',
-                              );
-                              final end = DateTime.tryParse(
-                                '${timeBlock?['end']}',
-                              );
-                              if (start != null && end != null) {
-                                final days =
-                                    DateTime.utc(
-                                          picked.year,
-                                          picked.month,
-                                          picked.day,
-                                        )
-                                        .difference(
-                                          DateTime.utc(
-                                            date.year,
-                                            date.month,
-                                            date.day,
-                                          ),
-                                        )
-                                        .inDays;
-                                DateTime move(DateTime value) => DateTime(
-                                  value.year,
-                                  value.month,
-                                  value.day + days,
-                                  value.hour,
-                                  value.minute,
-                                );
-                                timeBlock!['start'] = move(start)
-                                    .toIso8601String();
-                                timeBlock!['end'] = move(end).toIso8601String();
-                              }
-                              date = picked;
-                            });
-                          }
-                        },
-                        icon: const Icon(Icons.date_range),
-                      ),
-                    ],
-                  ),
-                if (section == 'tasks' && hasPlanDate && timeBlock != null)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('执行时间块'),
-                    subtitle: Text(
-                      '${DateTime.tryParse('${timeBlock!['start']}')?.toLocal().toString().substring(0, 16) ?? ''}–${DateTime.tryParse('${timeBlock!['end']}')?.toLocal().toString().substring(11, 16) ?? ''}',
-                    ),
-                    trailing: IconButton(
-                      tooltip: '移除执行时间块',
-                      onPressed: () => setState(() => timeBlock = null),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ),
               ],
             ),
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: saving ? null : () => Navigator.pop(context),
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () async {
-              if (section != 'reports' && title.text.trim().isEmpty) return;
-              final row = <String, dynamic>{
-                ...?defaults,
-                ...?existing,
-                'id': existing?['id'] ?? newId(),
-                if (section == 'tasks' && existing == null)
-                  'createdAt': DateTime.now().toIso8601String(),
-              };
-              if (section == 'tasks') {
-                row.addAll({
-                  'title': title.text.trim(),
-                  'notes': notes.text,
-                  'project': project.text,
-                  'category': category.text,
-                  'reportCategory': reportCategory,
-                  'quadrant': quadrant,
-                  'blueprintID': blueprintId.isEmpty ? null : blueprintId,
-                  'dependencyIDs': dependencyIds,
-                  'scheduledFor': hasPlanDate ? date.toIso8601String() : null,
-                  'timeBlock': hasPlanDate ? timeBlock : null,
-                  'status': hasPlanDate && row['status'] == 'unscheduled'
-                      ? 'pending'
-                      : !hasPlanDate &&
-                            row['status'] != 'completed' &&
-                            row['status'] != 'cancelled'
-                      ? 'unscheduled'
-                      : row['status'] ?? 'pending',
-                });
-                if (existing == null && row['status'] == 'completed') {
-                  final now = DateTime.now().toIso8601String();
-                  row['completedAt'] = now;
-                  row['statusChangedAt'] = now;
-                }
-              } else if (section == 'blueprints') {
-                row.addAll({
-                  'name': title.text.trim(),
-                  'goal': notes.text,
-                  'date': date.toIso8601String(),
-                });
-              } else if (section == 'reports') {
-                row.addAll({
-                  'content': notes.text,
-                  'reportDate': date.toIso8601String(),
-                });
-              } else {
-                row.addAll({
-                  'name': title.text.trim(),
-                  'date': date.toIso8601String(),
-                });
-                if (section == 'anniversaries') {
-                  row['notes'] = notes.text;
-                  row['coverImage'] = coverImage;
-                  row['type'] = anniversaryType;
-                  row['contact'] = contact.text.trim();
-                  row['calendar'] = anniversaryCalendar;
-                  row['repeatYearly'] = repeatYearly;
-                  row['notificationEnabled'] = notificationEnabled;
-                  row['reminderDays'] = reminderDays;
-                  row['showOnHome'] = showOnHome;
-                  row['showInMenuBar'] = showInMenuBar;
-                  row['privacyMode'] = privacyMode;
-                  row['preparationEnabled'] = preparationEnabled;
-                  row['preparationLeadDays'] = preparationLeadDays;
-                  row['preparationTaskTitle'] = preparationTitle.text.trim();
-                  row['blueprintID'] = blueprintId.isEmpty ? null : blueprintId;
-                }
-              }
-              try {
-                await vm.put(section, row);
-                if (context.mounted) Navigator.pop(context);
-              } catch (error) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text('$error')));
-                }
-              }
-            },
+            onPressed: saving
+                ? null
+                : () async {
+                    if (section != 'reports' && title.trim().isEmpty) return;
+                    if (section == 'tasks' &&
+                        [estimateText, remainingText].any(
+                          (value) =>
+                              value.isNotEmpty &&
+                              (!RegExp(r'^\d+$').hasMatch(value) ||
+                                  int.tryParse(value) == null),
+                        )) {
+                      setState(() => saveError = '工时请填写非负整数');
+                      return;
+                    }
+                    setState(() => saving = true);
+                    final row = <String, dynamic>{
+                      ...?defaults,
+                      ...?existing,
+                      'id': existing?['id'] ?? newId(),
+                      if (section == 'tasks' && existing == null)
+                        'createdAt': DateTime.now().toIso8601String(),
+                    };
+                    if (section == 'tasks') {
+                      row.addAll({
+                        'title': title.trim(),
+                        'notes': notes,
+                        'project': project,
+                        'category': category,
+                        'reportCategory': reportCategory,
+                        'quadrant': quadrant,
+                        'blueprintID': blueprintId.isEmpty ? null : blueprintId,
+                        'stageID': stageId.isEmpty ? null : stageId,
+                        'milestoneID': milestoneId.isEmpty ? null : milestoneId,
+                        'dependencyIDs': [...dependencyIds],
+                        'estimatedMinutes': int.tryParse(estimateText),
+                        'remainingMinutes': int.tryParse(remainingText),
+                        'dueDate': deadline?.toIso8601String(),
+                        'isPlanLocked': planLocked,
+                        'planLocked': planLocked,
+
+                        'scheduledFor': hasPlanDate
+                            ? date.toIso8601String()
+                            : null,
+                        'timeBlock': hasPlanDate ? timeBlock : null,
+                        if (calendarAutoSync ||
+                            row.containsKey('calendarAutoSync'))
+                          'calendarAutoSync': calendarAutoSync,
+                        'status': hasPlanDate && row['status'] == 'unscheduled'
+                            ? 'pending'
+                            : !hasPlanDate &&
+                                  row['status'] != 'completed' &&
+                                  row['status'] != 'cancelled'
+                            ? 'unscheduled'
+                            : row['status'] ?? 'pending',
+                      });
+                      if (existing == null && row['status'] == 'completed') {
+                        final now = DateTime.now().toIso8601String();
+                        row['completedAt'] = now;
+                        row['statusChangedAt'] = now;
+                      }
+                    } else if (section == 'blueprints') {
+                      row.addAll({
+                        'name': title.trim(),
+                        'goal': notes,
+                        'dueDate': date.toIso8601String(),
+                      });
+                    } else if (section == 'reports') {
+                      row.addAll({
+                        'content': notes,
+                        'reportDate': date.toIso8601String(),
+                      });
+                    } else {
+                      row.addAll({
+                        'name': title.trim(),
+                        if (section == 'anniversaries')
+                          'date': date.toIso8601String()
+                        else
+                          'dueDate': date.toIso8601String(),
+                        if (section == 'milestones')
+                          'stageID': stageId.isEmpty ? null : stageId,
+                      });
+                      if (section == 'anniversaries') {
+                        row['notes'] = notes;
+                        row['coverImage'] = coverImage;
+                        row['type'] = anniversaryType;
+                        row['contact'] = contact.trim();
+                        row['calendar'] = anniversaryCalendar;
+                        row['repeatYearly'] = repeatYearly;
+                        row['notificationEnabled'] = notificationEnabled;
+                        row['reminderDays'] = reminderDays;
+                        row['showOnHome'] = showOnHome;
+                        row['showInMenuBar'] = showInMenuBar;
+                        row['privacyMode'] = privacyMode;
+                        row['preparationEnabled'] = preparationEnabled;
+                        row['preparationLeadDays'] = preparationLeadDays;
+                        row['preparationTaskTitle'] = preparationTitle.trim();
+                        row['blueprintID'] = blueprintId.isEmpty
+                            ? null
+                            : blueprintId;
+                      }
+                    }
+                    try {
+                      if (section == 'tasks' && existing != null) {
+                        row.remove('images');
+                        final fields = <String, dynamic>{
+                          for (final entry in row.entries)
+                            if (entry.key != 'id' &&
+                                jsonEncode(entry.value) !=
+                                    jsonEncode(existing[entry.key]))
+                              entry.key: entry.value,
+                        };
+                        if (fields.isNotEmpty) {
+                          await vm.updateBlueprintFields(
+                            section,
+                            existing,
+                            fields,
+                          );
+                        }
+                      } else {
+                        await vm.put(section, row);
+                      }
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        final calendarStatus = vm.calendarStatus.value;
+                        if (section == 'tasks' &&
+                            (calendarAutoSync ||
+                                existing?['calendarAutoSync'] == true) &&
+                            calendarStatus.startsWith('系统日历同步失败')) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(calendarStatus)),
+                          );
+                        }
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        setState(() => saving = false);
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('$error')));
+                      }
+                    }
+                  },
             child: const Text('保存'),
           ),
         ],
       ),
     ),
   );
-  title.dispose();
-  notes.dispose();
-  category.dispose();
-  project.dispose();
-  contact.dispose();
-  preparationTitle.dispose();
 }
 
 Future<void> showTaskBlueprintDetail(
@@ -2974,7 +3584,11 @@ Future<void> showTaskBlueprintDetail(
         height: 580,
         child: Obx(() {
           vm.revision.value;
-          final descendants = <Map<String, dynamic>>[root];
+          final current = vm.tasks
+              .where((task) => task['id'] == root['id'])
+              .firstOrNull;
+          if (current == null) return const Center(child: Text('事项已不存在'));
+          final descendants = <Map<String, dynamic>>[current];
           final seen = <String>{'${root['id']}'};
           for (var index = 0; index < descendants.length; index++) {
             final parentId = '${descendants[index]['id']}';
@@ -2987,11 +3601,17 @@ Future<void> showTaskBlueprintDetail(
           return WorkflowCanvas(
             tasks: descendants,
             onEdit: (task) => showEditor(dialog, 'tasks', existing: task),
-            onMove: (task, position) => vm.put('tasks', {
-              ...task,
-              'workflowX': position.dx,
-              'workflowY': position.dy,
-            }),
+            onMove: (task, position) => vm.moveBlueprintNode(
+              task['id'] as String,
+              position.dx,
+              position.dy,
+            ),
+            onPreview: (task) => showBlueprintImagePreview(
+              dialog,
+              blueprintImages(task['images']),
+              0,
+              '${task['title']} · 参考图',
+            ),
           );
         }),
       ),
@@ -3003,13 +3623,13 @@ Future<void> showTaskBlueprintDetail(
         ),
         TextButton.icon(
           onPressed: () async {
-            final input = TextEditingController();
+            var input = '';
             final title = await showDialog<String>(
               context: dialog,
               builder: (inner) => AlertDialog(
                 title: const Text('添加子任务'),
                 content: TextField(
-                  controller: input,
+                  onChanged: (value) => input = value,
                   autofocus: true,
                   decoration: const InputDecoration(labelText: '标题'),
                 ),
@@ -3019,13 +3639,12 @@ Future<void> showTaskBlueprintDetail(
                     child: const Text('取消'),
                   ),
                   FilledButton(
-                    onPressed: () => Navigator.pop(inner, input.text.trim()),
+                    onPressed: () => Navigator.pop(inner, input.trim()),
                     child: const Text('添加'),
                   ),
                 ],
               ),
             );
-            input.dispose();
             if (title != null && title.isNotEmpty) {
               await vm.addChild(root, title);
             }
@@ -3042,240 +3661,80 @@ Future<void> showTaskBlueprintDetail(
   );
 }
 
-Future<void> showBlueprintDetail(
+Future<void> showBlueprintForTask(
   BuildContext context,
-  Map<String, dynamic> blueprint,
-) async {
+  Map<String, dynamic> task,
+) {
   final vm = Get.find<WorkspaceViewModel>();
-  await showDialog<void>(
-    context: context,
-    builder: (dialog) => AlertDialog(
-      title: Text('${blueprint['name']}'),
-      content: SizedBox(
-        width: 620,
-        height: 540,
-        child: Obx(() {
-          vm.revision.value;
-          final id = blueprint['id'];
-          final stages = vm
-              .items('stages')
-              .where((e) => e['blueprintID'] == id)
-              .toList();
-          final milestones = vm
-              .items('milestones')
-              .where((e) => e['blueprintID'] == id)
-              .toList();
-          final tasks = vm.tasks.where((e) => e['blueprintID'] == id).toList();
-          return ListView(
-            children: [
-              Text('${blueprint['goal'] ?? ''}'),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const Text('阶段'),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () => showEditor(
-                      dialog,
-                      'stages',
-                      defaults: {'blueprintID': id},
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('添加阶段'),
-                  ),
-                ],
-              ),
-              for (final row in stages)
-                ListTile(
-                  title: Text('${row['name']}'),
-                  subtitle: Text('${row['date'] ?? ''}'),
-                  onTap: () => showEditor(dialog, 'stages', existing: row),
-                  trailing: IconButton(
-                    tooltip: '删除',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => vm.remove('stages', '${row['id']}'),
-                  ),
-                ),
-              const Divider(),
-              Row(
-                children: [
-                  const Text('里程碑'),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () => showEditor(
-                      dialog,
-                      'milestones',
-                      defaults: {'blueprintID': id},
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('添加里程碑'),
-                  ),
-                ],
-              ),
-              for (final row in milestones)
-                ListTile(
-                  title: Text('${row['name']}'),
-                  subtitle: Text('${row['date'] ?? ''}'),
-                  onTap: () => showEditor(dialog, 'milestones', existing: row),
-                  trailing: IconButton(
-                    tooltip: '删除',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => vm.remove('milestones', '${row['id']}'),
-                  ),
-                ),
-              const Divider(),
-              Row(
-                children: [
-                  Text('关联事项（${tasks.length}）'),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () => showDialog<void>(
-                      context: dialog,
-                      builder: (canvasContext) => AlertDialog(
-                        title: Text('${blueprint['name']} · 工作流'),
-                        content: SizedBox(
-                          width: 860,
-                          height: 580,
-                          child: Obx(() {
-                            vm.revision.value;
-                            return WorkflowCanvas(
-                              tasks: vm.tasks
-                                  .where((task) => task['blueprintID'] == id)
-                                  .toList(),
-                              onEdit: (task) => showEditor(
-                                canvasContext,
-                                'tasks',
-                                existing: task,
-                              ),
-                              onMove: (task, position) => vm.put('tasks', {
-                                ...task,
-                                'workflowX': position.dx,
-                                'workflowY': position.dy,
-                              }),
-                            );
-                          }),
-                        ),
-                        actions: [
-                          Obx(
-                            () => TextButton.icon(
-                              onPressed: vm.undoCount.value > 0
-                                  ? vm.undo
-                                  : null,
-                              icon: const Icon(Icons.undo),
-                              label: const Text('撤销'),
-                            ),
-                          ),
-                          Obx(
-                            () => TextButton.icon(
-                              onPressed: vm.redoCount.value > 0
-                                  ? vm.redo
-                                  : null,
-                              icon: const Icon(Icons.redo),
-                              label: const Text('重做'),
-                            ),
-                          ),
-                          FilledButton(
-                            onPressed: () => Navigator.pop(canvasContext),
-                            child: const Text('关闭'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    icon: const Icon(Icons.account_tree_outlined),
-                    label: const Text('工作流'),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => showEditor(
-                      dialog,
-                      'tasks',
-                      defaults: {'blueprintID': id},
-                    ),
-                    icon: const Icon(Icons.add),
-                    label: const Text('添加事项'),
-                  ),
-                ],
-              ),
-              for (final row in tasks)
-                ListTile(
-                  title: Text('${row['title']}'),
-                  subtitle: Text('${row['status'] ?? 'pending'}'),
-                  onTap: () => showEditor(dialog, 'tasks', existing: row),
-                ),
-            ],
-          );
-        }),
-      ),
-      actions: [
-        TextButton.icon(
-          onPressed: () => showPlanHistory(dialog, '${blueprint['id']}'),
-          icon: const Icon(Icons.history),
-          label: const Text('规划历史'),
-        ),
-        TextButton.icon(
-          onPressed: () => showReplanDialog(dialog, blueprint),
-          icon: const Icon(Icons.auto_awesome),
-          label: const Text('AI 重新规划'),
-        ),
-        TextButton.icon(
-          onPressed: () async {
-            try {
-              final data = vm.exportBlueprint('${blueprint['id']}');
-              await FilePicker.saveFile(
-                fileName: '蓝图-${blueprint['name']}.json',
-                bytes: Uint8List.fromList(
-                  utf8.encode(const JsonEncoder.withIndent('  ').convert(data)),
-                ),
-              );
-            } catch (error) {
-              if (dialog.mounted) {
-                ScaffoldMessenger.of(dialog)
-                    .showSnackBar(SnackBar(content: Text('$error')));
-              }
-            }
-          },
-          icon: const Icon(Icons.save_alt),
-          label: const Text('导出蓝图'),
-        ),
-        TextButton(
-          onPressed: () =>
-              showEditor(dialog, 'blueprints', existing: blueprint),
-          child: const Text('编辑蓝图'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(dialog),
-          child: const Text('关闭'),
-        ),
-      ],
-    ),
-  );
+  final blueprint = vm
+      .items('blueprints')
+      .where((row) => row['id'] == task['blueprintID'])
+      .firstOrNull;
+  if (blueprint != null) {
+    return showBlueprintDetail(
+      context,
+      blueprint,
+      initialTaskId: '${task['id']}',
+    );
+  }
+  final id = CalendarPlanLogic.rootId(task, vm.tasks);
+  final root = vm.tasks.where((row) => row['id'] == id).firstOrNull ?? task;
+  return showTaskBlueprintDetail(context, root);
 }
 
+Future<void> showBlueprintDetail(
+  BuildContext context,
+  Map<String, dynamic> blueprint, {
+  String? initialTaskId,
+}) => showDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (dialog) => BlueprintWorkbench(
+    id: blueprint['id'] as String,
+    vm: Get.find<WorkspaceViewModel>(),
+    edit: showEditor,
+    replan: showReplanDialog,
+    initialTaskId: initialTaskId,
+  ),
+);
+
 Future<void> showAiTaskDraft(BuildContext context) async {
-  final description = TextEditingController();
+  var description = '';
   PlatformFile? imageFile;
   final request = await showDialog<(String, PlatformFile?)>(
     context: context,
     builder: (dialog) => StatefulBuilder(
       builder: (dialog, setState) => AlertDialog(
         title: const Text('AI 事项草稿'),
+        scrollable: true,
         content: SizedBox(
           width: 480,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
-                controller: description,
+                onChanged: (value) => description = value,
                 maxLines: 5,
                 autofocus: true,
                 decoration: const InputDecoration(labelText: '描述要完成的事'),
               ),
               TextButton.icon(
                 onPressed: () async {
-                  final files = await FilePicker.pickFiles(
-                    type: FileType.custom,
-                    allowedExtensions: ['png', 'jpg', 'jpeg'],
-                  );
-                  if (files.isNotEmpty) setState(() => imageFile = files.first);
+                  try {
+                    final file = await FilePicker.pickFile(
+                      type: FileType.custom,
+                      allowedExtensions: ['png', 'jpg', 'jpeg'],
+                    );
+                    if (file != null && dialog.mounted) {
+                      setState(() => imageFile = file);
+                    }
+                  } catch (error) {
+                    if (dialog.mounted) {
+                      ScaffoldMessenger.of(
+                        dialog,
+                      ).showSnackBar(SnackBar(content: Text('无法选择图片：$error')));
+                    }
+                  }
                 },
                 icon: const Icon(Icons.image_outlined),
                 label: Text(imageFile?.name ?? '选择图片'),
@@ -3291,14 +3750,13 @@ Future<void> showAiTaskDraft(BuildContext context) async {
           ),
           FilledButton(
             onPressed: () =>
-                Navigator.pop(dialog, (description.text.trim(), imageFile)),
+                Navigator.pop(dialog, (description.trim(), imageFile)),
             child: const Text('生成'),
           ),
         ],
       ),
     ),
   );
-  description.dispose();
   if (request == null ||
       (request.$1.isEmpty && request.$2 == null) ||
       !context.mounted) {
@@ -3312,8 +3770,7 @@ Future<void> showAiTaskDraft(BuildContext context) async {
         ? await AiService.complete(prompt)
         : await AiService.completeWithImage(
             prompt,
-            await File(image.path ?? (throw const FormatException('图片路径不可用')))
-                .readAsBytes(),
+            await image.readAsBytes(),
             image.extension?.toLowerCase() == 'png'
                 ? 'image/png'
                 : 'image/jpeg',
@@ -3324,6 +3781,7 @@ Future<void> showAiTaskDraft(BuildContext context) async {
       context: context,
       builder: (dialog) => AlertDialog(
         title: const Text('确认任务草稿'),
+        scrollable: true,
         content: SizedBox(
           width: 480,
           child: Column(
@@ -3373,75 +3831,197 @@ Future<String?> showCategoryEditor(
   var symbol = existing == null
       ? 'label'
       : '${vm.items('categories').where((row) => row['name'] == existing).firstOrNull?['symbol'] ?? 'label'}';
-  if (!categorySymbols.containsKey(symbol)) symbol = 'label';
   var saving = false;
+  String? saveError;
   return showDialog<String>(
     context: context,
     builder: (dialog) => StatefulBuilder(
-      builder: (dialog, setState) => AlertDialog(
-        title: Text(existing == null ? '添加类别' : '编辑类别'),
-        content: SizedBox(
-          width: 360,
+      builder: (dialog, setState) {
+        final theme = Theme.of(dialog);
+        final colors = theme.colorScheme;
+        final icon = categoryIconFor(symbol);
+        final canSave = !saving && name.trim().isNotEmpty;
+        final fieldBorder = OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: colors.outline),
+        );
+
+        Future<void> save() async {
+          final trimmed = name.trim();
+          if (saving || trimmed.isEmpty) return;
+          setState(() {
+            saving = true;
+            saveError = null;
+          });
+          try {
+            if (existing == null) {
+              await vm.addCategory(trimmed, symbol: symbol);
+            } else {
+              await vm.renameCategory(existing, trimmed, symbol: symbol);
+            }
+            if (dialog.mounted) Navigator.pop(dialog, trimmed);
+          } catch (error) {
+            if (!dialog.mounted) return;
+            setState(() {
+              saveError = switch (error) {
+                StateError() => error.message,
+                FormatException() => error.message,
+                _ => '$error',
+              };
+              saving = false;
+            });
+          }
+        }
+
+        return Dialog(
+          constraints: const BoxConstraints(maxWidth: 428),
+          clipBehavior: Clip.antiAlias,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextFormField(
-                initialValue: name,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: '名称'),
-                onChanged: (value) => name = value,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+                child: Semantics(
+                  header: true,
+                  namesRoute: true,
+                  child: Text(
+                    existing == null ? '新建分类' : '编辑分类',
+                    style: theme.textTheme.titleLarge,
+                  ),
+                ),
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: symbol,
-                decoration: const InputDecoration(labelText: '图标'),
-                items: [
-                  for (final entry in categorySymbols.entries)
-                    DropdownMenuItem(
-                      value: entry.key,
-                      child: Row(
-                        children: [
-                          Icon(entry.value.$2, size: 20),
-                          const SizedBox(width: 10),
-                          Text(entry.value.$1),
-                        ],
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TextFormField(
+                        initialValue: name,
+                        autofocus: true,
+                        enabled: !saving,
+                        textInputAction: TextInputAction.done,
+                        decoration: InputDecoration(
+                          labelText: '分类名称',
+                          hintText: '例如：工作计划',
+                          floatingLabelBehavior: FloatingLabelBehavior.always,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          border: fieldBorder,
+                          enabledBorder: fieldBorder,
+                          focusedBorder: fieldBorder.copyWith(
+                            borderSide: BorderSide(
+                              color: colors.primary,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                        onChanged: (value) => setState(() {
+                          name = value;
+                          saveError = null;
+                        }),
+                        onFieldSubmitted: (_) => save(),
                       ),
-                    ),
-                ],
-                onChanged: (value) => setState(() => symbol = value ?? 'label'),
+                      const SizedBox(height: 16),
+                      OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: colors.surfaceContainerLow,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                final picked = await showCategoryIconPicker(
+                                  dialog,
+                                  symbol,
+                                );
+                                if (picked != null && dialog.mounted) {
+                                  setState(() => symbol = picked);
+                                }
+                              },
+                        child: Row(
+                          children: [
+                            XuIconTile(icon.$2),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '分类图标',
+                                    style: theme.textTheme.titleSmall,
+                                  ),
+                                  Text(
+                                    icon.$1,
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Text('选择图标'),
+                            const Icon(Icons.chevron_right_rounded, size: 18),
+                          ],
+                        ),
+                      ),
+                      if (saveError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Semantics(
+                            liveRegion: true,
+                            child: Text(
+                              saveError!,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.error,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerLow,
+                  border: Border(top: BorderSide(color: colors.outlineVariant)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  child: OverflowBar(
+                    alignment: MainAxisAlignment.end,
+                    overflowAlignment: OverflowBarAlignment.end,
+                    spacing: 8,
+                    overflowSpacing: 8,
+                    children: [
+                      TextButton(
+                        onPressed: saving ? null : () => Navigator.pop(dialog),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(88, 40),
+                        ),
+                        onPressed: canSave ? save : null,
+                        child: Text(saving ? '保存中…' : '保存'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: saving ? null : () => Navigator.pop(dialog),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    setState(() => saving = true);
-                    try {
-                      if (existing == null) {
-                        await vm.addCategory(name, symbol: symbol);
-                      } else {
-                        await vm.renameCategory(existing, name, symbol: symbol);
-                      }
-                      if (dialog.mounted) Navigator.pop(dialog, name.trim());
-                    } catch (error) {
-                      if (dialog.mounted) {
-                        ScaffoldMessenger.of(dialog)
-                            .showSnackBar(SnackBar(content: Text('$error')));
-                        setState(() => saving = false);
-                      }
-                    }
-                  },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }
@@ -3454,9 +4034,37 @@ Future<void> showTemplateDialog(BuildContext context) async {
       title: const Text('选择蓝图模板'),
       content: SizedBox(
         width: 500,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        height: 440,
+        child: ListView(
           children: [
+            for (final template in vm.items('blueprintTemplates'))
+              ListTile(
+                leading: const Icon(Icons.bookmark_outline),
+                title: Text('${template['name']}'),
+                subtitle: const Text('我的模板'),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: dialog,
+                    initialDate: DateTime.now(),
+                    firstDate: DateTime(1900),
+                    lastDate: DateTime(2200),
+                    helpText: '选择蓝图开始日期',
+                  );
+                  if (date == null || !dialog.mounted) return;
+                  try {
+                    await vm.createFromSavedBlueprintTemplate(
+                      template['id'] as String,
+                      date,
+                    );
+                    if (dialog.mounted) Navigator.pop(dialog);
+                  } catch (error) {
+                    if (dialog.mounted) {
+                      ScaffoldMessenger.of(dialog)
+                          .showSnackBar(SnackBar(content: Text('$error')));
+                    }
+                  }
+                },
+              ),
             for (final template in blueprintTemplates)
               ListTile(
                 title: Text(template.name),
@@ -3497,7 +4105,7 @@ Future<void> showReplanDialog(
         (t) =>
             t['blueprintID'] == id &&
             !['completed', 'cancelled', 'unscheduled'].contains(t['status']) &&
-            t['isPlanLocked'] != true,
+            !CalendarPlanLogic.isLocked(t),
       )
       .toList();
   if (editable.isEmpty) {
@@ -3505,21 +4113,23 @@ Future<void> showReplanDialog(
         .showSnackBar(const SnackBar(content: Text('没有可重新规划的任务')));
     return;
   }
-  final minutes = TextEditingController(text: '240');
+  var minutes = '240';
   var includeNotes = false, includeProject = true;
   final settings = await showDialog<(int, bool, bool)>(
     context: context,
     builder: (dialog) => StatefulBuilder(
       builder: (dialog, setState) => AlertDialog(
         title: const Text('AI 重新规划'),
+        scrollable: true,
         content: SizedBox(
           width: 460,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text('将 ${editable.length} 项未完成任务发送给 DeepSeek 生成日期建议。'),
-              TextField(
-                controller: minutes,
+              TextFormField(
+                initialValue: minutes,
+                onChanged: (value) => minutes = value,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: '每日可用分钟'),
               ),
@@ -3543,7 +4153,7 @@ Future<void> showReplanDialog(
           ),
           FilledButton(
             onPressed: () {
-              final value = int.tryParse(minutes.text);
+              final value = int.tryParse(minutes);
               if (value != null && value > 0 && value <= 1440) {
                 Navigator.pop(dialog, (value, includeNotes, includeProject));
               }
@@ -3554,7 +4164,6 @@ Future<void> showReplanDialog(
       ),
     ),
   );
-  minutes.dispose();
   if (settings == null || !context.mounted) return;
   try {
     final rows = editable

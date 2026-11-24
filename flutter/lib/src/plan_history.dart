@@ -15,7 +15,7 @@ Future<void> showPlanHistory(
 ) => showDialog<void>(
   context: context,
   builder: (context) => AlertDialog(
-    title: const Text('AI 变更历史'),
+    title: const Text('规划与变更历史'),
     content: SizedBox(
       width: 690,
       height: 500,
@@ -86,7 +86,17 @@ Future<void> showPlanHistory(
                                   as List? ??
                               [])
                         ListTile(title: Text('任务：${(raw as Map)['title']}')),
-                    if (record['kind'] != 'aiBlueprint' &&
+                    if (record['baseline'] case final Map baseline)
+                      for (final task
+                          in (baseline['tasks'] as List? ?? [])
+                              .whereType<Map>())
+                        ListTile(
+                          title: Text('${task['title']}'),
+                          subtitle: Text(_date(task['scheduledFor'])),
+                        ),
+                    if (record['affectedMilestones'] case final List milestones)
+                      ListTile(title: Text('影响里程碑：${milestones.join('、')}')),
+                    if (!['aiBlueprint', 'baseline'].contains(record['kind']) &&
                         record['entries'] is! List)
                       const ListTile(title: Text('这条早期记录没有保存任务日期详情。')),
                     for (final raw in record['entries'] as List? ?? [])

@@ -29,7 +29,10 @@ class AppDelegate: FlutterAppDelegate {
   func setMenuContent(tasks: [[String: String]], anniversaries: [[String: String]]) {
     menuTasks = tasks
     menuAnniversaries = anniversaries
-    if let running = tasks.first(where: { $0["status"] == "inProgress" }) {
+    let runningTasks = tasks.filter { $0["status"] == "inProgress" }
+    if runningTasks.count > 1 {
+      statusItem?.button?.title = "▶ \(runningTasks.count) 项进行中"
+    } else if let running = runningTasks.first {
       statusItem?.button?.title = "▶ \(String((running["title"] ?? "序").prefix(8)))"
     } else if let upcoming = anniversaries.first,
               let days = Int(upcoming["days"] ?? ""), days <= 7 {
@@ -54,19 +57,23 @@ class AppDelegate: FlutterAppDelegate {
       entry.tag = index
       entry.target = self
       let submenu = NSMenu()
+      submenu.autoenablesItems = false
       let complete = NSMenuItem(title: "完成任务", action: #selector(completeTask(_:)), keyEquivalent: "")
+      complete.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
       complete.tag = index
       complete.target = self
-      complete.isEnabled = task["canRun"] == "true"
+      complete.isEnabled = (task["canComplete"] ?? task["canRun"]) == "true"
       submenu.addItem(complete)
       if task["status"] != "inProgress" {
         let start = NSMenuItem(title: "开始任务", action: #selector(startTask(_:)), keyEquivalent: "")
+        start.image = NSImage(systemSymbolName: "play.circle", accessibilityDescription: nil)
         start.tag = index
         start.target = self
-        start.isEnabled = task["canRun"] == "true"
+        start.isEnabled = (task["canStart"] ?? task["canRun"]) == "true"
         submenu.addItem(start)
       }
       let cancel = NSMenuItem(title: "取消任务（无需完成）", action: #selector(cancelTask(_:)), keyEquivalent: "")
+      cancel.image = NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil)
       cancel.tag = index
       cancel.target = self
       submenu.addItem(cancel)
@@ -74,7 +81,8 @@ class AppDelegate: FlutterAppDelegate {
       menu.addItem(entry)
     }
     if menuTasks.isEmpty {
-      let empty = NSMenuItem(title: "今天的待办已处理完毕。🎉", action: nil, keyEquivalent: "")
+      let empty = NSMenuItem(title: "今天没有待处理事项", action: nil, keyEquivalent: "")
+      empty.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
       empty.isEnabled = false
       menu.addItem(empty)
     }
@@ -95,6 +103,7 @@ class AppDelegate: FlutterAppDelegate {
       menu.addItem(.separator())
     }
     let add = NSMenuItem(title: "添加事项", action: #selector(addTask), keyEquivalent: "n")
+    add.image = NSImage(systemSymbolName: "plus.circle", accessibilityDescription: nil)
     add.keyEquivalentModifierMask = .command
     add.target = self
     menu.addItem(add)
@@ -105,6 +114,7 @@ class AppDelegate: FlutterAppDelegate {
     addAI.target = self
     menu.addItem(addAI)
     let palette = NSMenuItem(title: "命令面板", action: #selector(showCommandPalette), keyEquivalent: "k")
+    palette.image = NSImage(systemSymbolName: "bolt", accessibilityDescription: nil)
     palette.keyEquivalentModifierMask = .command
     palette.target = self
     menu.addItem(palette)
@@ -112,9 +122,11 @@ class AppDelegate: FlutterAppDelegate {
     open.target = self
     menu.addItem(open)
     let widget = NSMenuItem(title: "打开桌面小组件", action: #selector(openWidget), keyEquivalent: "")
+    widget.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
     widget.target = self
     menu.addItem(widget)
     let settings = NSMenuItem(title: "应用设置", action: #selector(openSettings), keyEquivalent: ",")
+    settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
     settings.keyEquivalentModifierMask = .command
     settings.target = self
     menu.addItem(settings)
@@ -199,14 +211,16 @@ private struct CompactWidgetContent: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       HStack {
-        Text("序").font(.title2.bold())
+        Label("今日", systemImage: "sun.max").font(.title2.bold())
         Spacer()
         Button(action: openMain) { Image(systemName: "arrow.up.right.square") }
           .help("打开主界面")
+          .accessibilityLabel("打开主界面")
       }
       if let task = current, let id = task["id"] {
         VStack(alignment: .leading, spacing: 8) {
-          Text(task["status"] == "inProgress" ? "正在执行" : "下一项")
+          let runningCount = tasks.filter { $0["status"] == "inProgress" }.count
+          Text(task["status"] == "inProgress" ? "\(runningCount) 项进行中" : "下一项")
             .font(.caption).foregroundStyle(.secondary)
           Text(task["title"] ?? "事项").font(.headline).lineLimit(2)
           if task["status"] == "inProgress", let raw = task["startedAt"],
@@ -220,11 +234,11 @@ private struct CompactWidgetContent: View {
           }
           HStack {
             if task["status"] != "inProgress" {
-              Button("开始") { startTask(id) }
-                .disabled(task["canRun"] != "true")
+              Button { startTask(id) } label: { Label("开始", systemImage: "play.fill") }
+                .disabled((task["canStart"] ?? task["canRun"]) != "true")
             }
-            Button("完成") { completeTask(id) }
-              .disabled(task["canRun"] != "true")
+            Button { completeTask(id) } label: { Label("完成", systemImage: "checkmark") }
+              .disabled((task["canComplete"] ?? task["canRun"]) != "true")
               .buttonStyle(.borderedProminent)
           }
         }
@@ -232,8 +246,13 @@ private struct CompactWidgetContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
       } else {
-        Label("今日已清空", systemImage: "checkmark.circle")
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 10) {
+          Image(systemName: "checkmark.circle").font(.system(size: 30))
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+          Text("今日没有待处理事项").font(.headline)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
       if let anniversary = anniversaries.first {
         Divider()

@@ -6,6 +6,7 @@ import 'package:ifa_flutter_scaffold/ifa_flutter_scaffold.dart';
 
 import 'calendar_plan_logic.dart';
 import 'design_system/xu_theme.dart';
+import 'design_system/components/xu_shell.dart';
 import 'native.dart';
 import 'workspace.dart';
 
@@ -17,19 +18,22 @@ class CalendarPage extends StatefulWidget {
     required this.tasks,
     required this.onEditTask,
     required this.onAddTask,
+    this.compact = false,
   });
   final List<Map<String, dynamic>> tasks;
   final void Function(Map<String, dynamic> task) onEditTask;
   final void Function(DateTime day) onAddTask;
+  final bool compact;
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
 }
 
 class _CalendarPageState extends State<CalendarPage> {
-  CalendarMode mode = CalendarMode.week;
+  late CalendarMode mode;
   DateTime selectedDate = CalendarPlanLogic.day(DateTime.now());
   bool showsSeries = true;
+  bool showsCompactSeries = false;
   bool waitingOnly = false;
   String? selectedRootId;
   final expandedRoots = <String>{};
@@ -48,6 +52,7 @@ class _CalendarPageState extends State<CalendarPage> {
   @override
   void initState() {
     super.initState();
+    mode = widget.compact ? CalendarMode.day : CalendarMode.week;
     hours = CalendarWorkHours.fromSettings(
       vm
           .items('settings')
@@ -296,7 +301,7 @@ class _CalendarPageState extends State<CalendarPage> {
     if (task == null || task['status'] == 'cancelled') return false;
     if (_childrenOf(task).isNotEmpty) return true;
     return !CalendarPlanLogic.isProcessed(task) &&
-        task['planLocked'] != true &&
+        !CalendarPlanLogic.isLocked(task) &&
         CalendarPlanLogic.executable(widget.tasks)
             .any((row) => '${row['id']}' == id);
   }
@@ -315,22 +320,33 @@ class _CalendarPageState extends State<CalendarPage> {
   }
 
   Widget _dragSource(Map<String, dynamic> task, Widget child) {
-    if (!_canDrop('${task['id']}')) return child;
-    return Draggable<String>(
-      data: '${task['id']}',
-      feedback: Material(
-        elevation: 4,
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 230),
-            child: Text('${task['title']}', maxLines: 2),
-          ),
+    final id = '${task['id']}';
+    if (!_canDrop(id)) return child;
+    final feedback = Material(
+      elevation: 4,
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 230),
+          child: Text('${task['title']}', maxLines: 2),
         ),
       ),
-      childWhenDragging: Opacity(opacity: 0.4, child: child),
+    );
+    final placeholder = Opacity(opacity: 0.4, child: child);
+    if (widget.compact) {
+      return LongPressDraggable<String>(
+        data: id,
+        feedback: feedback,
+        childWhenDragging: placeholder,
+        child: child,
+      );
+    }
+    return Draggable<String>(
+      data: id,
+      feedback: feedback,
+      childWhenDragging: placeholder,
       child: child,
     );
   }
@@ -339,54 +355,57 @@ class _CalendarPageState extends State<CalendarPage> {
   Widget build(BuildContext context) {
     final colors = XuColors.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final compact = widget.compact;
+    final seriesVisible = compact ? showsCompactSeries : showsSeries;
     return Column(
       children: [
         LayoutBuilder(
           builder: (context, limits) {
-            final navigation = Row(
-              mainAxisSize: MainAxisSize.min,
+            final prior = IconButton.outlined(
+              tooltip:
+                  '上一${mode.name == 'day'
+                      ? '日'
+                      : mode.name == 'week'
+                      ? '周'
+                      : '月'}',
+              onPressed: () => _shift(-1),
+              icon: const Icon(Icons.chevron_left),
+            );
+            final title = Text(
+              _periodTitle,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            );
+            final next = IconButton.outlined(
+              tooltip:
+                  '下一${mode.name == 'day'
+                      ? '日'
+                      : mode.name == 'week'
+                      ? '周'
+                      : '月'}',
+              onPressed: () => _shift(1),
+              icon: const Icon(Icons.chevron_right),
+            );
+            final goToToday = OutlinedButton(
+              onPressed: () {
+                setState(
+                  () => selectedDate = CalendarPlanLogic.day(DateTime.now()),
+                );
+                if (connected) unawaited(_readEvents());
+              },
+              child: const Text('今天'),
+            );
+            final navigation = Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                IconButton.outlined(
-                  tooltip:
-                      '上一${mode.name == 'day'
-                          ? '日'
-                          : mode.name == 'week'
-                          ? '周'
-                          : '月'}',
-                  onPressed: () => _shift(-1),
-                  icon: const Icon(Icons.chevron_left),
-                ),
+                prior,
                 SizedBox(
-                  width: limits.maxWidth < 900 ? 150 : 210,
-                  child: Text(
-                    _periodTitle,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                  width: limits.maxWidth < 900 ? 180 : 210,
+                  child: title,
                 ),
-                IconButton.outlined(
-                  tooltip:
-                      '下一${mode.name == 'day'
-                          ? '日'
-                          : mode.name == 'week'
-                          ? '周'
-                          : '月'}',
-                  onPressed: () => _shift(1),
-                  icon: const Icon(Icons.chevron_right),
-                ),
+                next,
                 const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: () {
-                    setState(
-                      () =>
-                          selectedDate = CalendarPlanLogic.day(DateTime.now()),
-                    );
-                    if (connected) unawaited(_readEvents());
-                  },
-                  child: const Text('今天'),
-                ),
+                goToToday,
               ],
             );
             final controls = Wrap(
@@ -407,32 +426,81 @@ class _CalendarPageState extends State<CalendarPage> {
                     if (connected) unawaited(_readEvents());
                   },
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => setState(() => showsSeries = !showsSeries),
-                  icon: const Icon(Icons.view_sidebar_outlined),
-                  label: const Text('任务系列'),
+                FilterChip(
+                  selected: seriesVisible,
+                  showCheckmark: false,
+                  onSelected: (value) => setState(() {
+                    if (compact) {
+                      showsCompactSeries = value;
+                    } else {
+                      showsSeries = value;
+                    }
+                  }),
+                  avatar: Icon(
+                    seriesVisible
+                        ? Icons.view_sidebar_rounded
+                        : Icons.view_sidebar_outlined,
+                    size: 18,
+                  ),
+                  label: Text(compact && seriesVisible ? '返回日历' : '任务系列'),
                 ),
-                FilledButton.icon(
-                  onPressed: () => widget.onAddTask(selectedDate),
-                  icon: const Icon(Icons.add),
-                  label: const Text('安排事项'),
-                ),
+                if (compact)
+                  IconButton.filled(
+                    tooltip: '安排事项',
+                    onPressed: () => widget.onAddTask(selectedDate),
+                    icon: const Icon(Icons.add),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: () => widget.onAddTask(selectedDate),
+                    icon: const Icon(Icons.add),
+                    label: const Text('安排事项'),
+                  ),
               ],
             );
+            if (compact) {
+              return Container(
+                color: colors.topbar,
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        prior,
+                        Expanded(child: title),
+                        next,
+                        const SizedBox(width: 6),
+                        goToToday,
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    controls,
+                  ],
+                ),
+              );
+            }
             return Container(
               color: colors.topbar,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: limits.maxWidth < 980
+              child:
+                  limits.maxWidth < 1040 ||
+                      MediaQuery.textScalerOf(context).scale(14) > 17
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
+                        Wrap(
+                          spacing: 16,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Text(
-                              '日历计划',
-                              style: Theme.of(context).textTheme.titleLarge,
+                            Semantics(
+                              header: true,
+                              child: Text(
+                                '日历计划',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
                             ),
-                            const Spacer(),
                             navigation,
                           ],
                         ),
@@ -457,25 +525,63 @@ class _CalendarPageState extends State<CalendarPage> {
         ),
         Divider(height: 1, color: colors.border),
         Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                child: mode == CalendarMode.month
-                    ? _monthView(context)
-                    : _timeView(context),
-              ),
-              if (showsSeries) ...[
-                VerticalDivider(width: 1, color: colors.border),
-                SizedBox(width: 320, child: _seriesPanel(context)),
-              ],
-            ],
-          ),
+          child: compact && seriesVisible
+              ? _seriesPanel(context)
+              : Row(
+                  children: [
+                    Expanded(
+                      child: mode == CalendarMode.month
+                          ? _monthView(context)
+                          : _timeView(context),
+                    ),
+                    if (!compact && showsSeries) ...[
+                      VerticalDivider(width: 1, color: colors.border),
+                      SizedBox(
+                        width: MediaQuery.sizeOf(context).width < 1120
+                            ? 264
+                            : 320,
+                        child: _seriesPanel(context),
+                      ),
+                    ],
+                  ],
+                ),
         ),
         Divider(height: 1, color: colors.border),
-        _footer(context, scheme),
+        if (compact) _compactFooter(context) else _footer(context, scheme),
       ],
     );
   }
+
+  Widget _compactFooter(BuildContext context) => Padding(
+    padding: const EdgeInsetsDirectional.only(start: 12, end: 4),
+    child: Row(
+      children: [
+        Expanded(
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              calendarState,
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ),
+        ),
+        PopupMenuButton<VoidCallback>(
+          tooltip: '日历选项',
+          onSelected: (action) => action(),
+          itemBuilder: (context) => [
+            PopupMenuItem(value: _showWorkHours, child: const Text('工作时段')),
+            PopupMenuItem(
+              enabled: !loadingEvents,
+              value: _readEvents,
+              child: Text(connected ? '刷新日历' : '连接日历'),
+            ),
+            if (lastBefore != null)
+              PopupMenuItem(value: _undo, child: const Text('撤销安排')),
+          ],
+        ),
+      ],
+    ),
+  );
 
   Widget _footer(BuildContext context, ColorScheme scheme) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -484,19 +590,37 @@ class _CalendarPageState extends State<CalendarPage> {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text('☑ 子任务时间块', style: Theme.of(context).textTheme.labelSmall),
-        Text('▦ 系统日程', style: Theme.of(context).textTheme.labelSmall),
-        Text('▱ 系列范围不占用时间', style: Theme.of(context).textTheme.labelSmall),
-        Text(
-          calendarState,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-            color: calendarState.contains('失败') ? scheme.error : null,
+        for (final (icon, label) in const [
+          (Icons.assignment_turned_in_outlined, '子任务时间块'),
+          (Icons.event_outlined, '系统日程'),
+          (Icons.date_range_rounded, '系列范围不占用时间'),
+        ])
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: XuColors.of(context).secondaryText),
+              const SizedBox(width: 4),
+              Text(label, style: Theme.of(context).textTheme.labelSmall),
+            ],
+          ),
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            calendarState,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: calendarState.contains('失败') ? scheme.error : null,
+            ),
           ),
         ),
-        OutlinedButton(onPressed: _showWorkHours, child: const Text('工作时段')),
-        OutlinedButton(
+        OutlinedButton.icon(
+          onPressed: _showWorkHours,
+          icon: const Icon(Icons.schedule_rounded),
+          label: const Text('工作时段'),
+        ),
+        OutlinedButton.icon(
           onPressed: loadingEvents ? null : _readEvents,
-          child: Text(connected ? '刷新日历' : '连接日历'),
+          icon: Icon(connected ? Icons.refresh_rounded : Icons.link_rounded),
+          label: Text(connected ? '刷新日历' : '连接日历'),
         ),
         if (lastBefore != null)
           TextButton(onPressed: _undo, child: const Text('撤销安排')),
@@ -694,7 +818,7 @@ class _CalendarPageState extends State<CalendarPage> {
     return LayoutBuilder(
       builder: (context, limits) {
         final width = mode == CalendarMode.day
-            ? math.max(limits.maxWidth, 420.0)
+            ? math.max(limits.maxWidth, widget.compact ? 280.0 : 420.0)
             : math.max(limits.maxWidth, 80.0 + 7 * 124.0);
         final columnWidth = (width - 80) / days.length;
         return SingleChildScrollView(
@@ -1133,11 +1257,9 @@ class _CalendarPageState extends State<CalendarPage> {
           const SizedBox(height: 12),
           Expanded(
             child: roots.isEmpty
-                ? Center(
-                    child: Text(
-                      '暂无任务系列',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
+                ? const XuEmptyState(
+                    icon: Icons.view_list_outlined,
+                    title: '暂无任务系列',
                   )
                 : ListView(
                     padding: const EdgeInsets.all(12),
@@ -1373,7 +1495,8 @@ class _CalendarPageState extends State<CalendarPage> {
     DateTime? day,
     int? hour,
   }) async {
-    if (task['planLocked'] == true || CalendarPlanLogic.isProcessed(task)) {
+    if (CalendarPlanLogic.isLocked(task) ||
+        CalendarPlanLogic.isProcessed(task)) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已处理或锁定的任务不能重新安排')));
       return;
@@ -1671,7 +1794,7 @@ class _CalendarPageState extends State<CalendarPage> {
               .where(
                 (row) =>
                     !CalendarPlanLogic.isProcessed(row) &&
-                    row['planLocked'] != true &&
+                    !CalendarPlanLogic.isLocked(row) &&
                     row['startedAt'] == null,
               )
               .map((row) => CalendarPlanLogic.plannedDate(row))
@@ -1727,7 +1850,7 @@ class _CalendarPageState extends State<CalendarPage> {
                 (row) =>
                     !parentIds.contains('${row['id']}') &&
                     !CalendarPlanLogic.isProcessed(row) &&
-                    row['planLocked'] != true &&
+                    !CalendarPlanLogic.isLocked(row) &&
                     row['startedAt'] == null &&
                     CalendarPlanLogic.plannedDate(row) != null,
               )
@@ -1739,7 +1862,7 @@ class _CalendarPageState extends State<CalendarPage> {
                     ? '系列汇总，不占用时间'
                     : CalendarPlanLogic.isProcessed(row)
                     ? '已处理'
-                    : row['planLocked'] == true
+                    : CalendarPlanLogic.isLocked(row)
                     ? '计划已锁定'
                     : row['startedAt'] != null
                     ? '已开始执行'

@@ -1,0 +1,61 @@
+name: Set up Xu Flutter
+description: Prepare the pinned Flutter SDK and resolve the locked dependencies
+
+inputs:
+  scaffold-token:
+    description: Read-only credential for the private ifa_flutter_scaffold repository
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Check private dependency credentials
+      shell: bash
+      env:
+        SCAFFOLD_READ_TOKEN: ${{ inputs.scaffold-token }}
+      run: |
+        if [[ -z "$SCAFFOLD_READ_TOKEN" ]]; then
+          echo "::error::Set IFA_FLUTTER_SCAFFOLD_TOKEN to a token with Contents read access to adolphJane/ifa_flutter_scaffold."
+          exit 1
+        fi
+
+    - name: Read Flutter version from FVM
+      id: version
+      shell: bash
+      run: echo "flutter=$(jq -er '.flutter' flutter/.fvmrc)" >> "$GITHUB_OUTPUT"
+
+    - name: Install Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ steps.version.outputs.flutter }}
+        channel: stable
+
+    - name: Set up FVM
+      shell: bash
+      env:
+        FLUTTER_VERSION: ${{ steps.version.outputs.flutter }}
+      run: |
+        dart pub global activate fvm 3.2.1
+        fvm_cache="$RUNNER_TEMP/xu-fvm"
+        flutter_sdk="$(cd "$(dirname "$(command -v flutter)")/.." && pwd -P)"
+        mkdir -p "$fvm_cache/versions"
+        ln -s "$flutter_sdk" "$fvm_cache/versions/$FLUTTER_VERSION"
+        "${PUB_CACHE:-$HOME/.pub-cache}/bin/fvm" config --no-use-git-cache --no-update-check
+        echo "FVM_CACHE_PATH=$fvm_cache" >> "$GITHUB_ENV"
+        echo "${PUB_CACHE:-$HOME/.pub-cache}/bin" >> "$GITHUB_PATH"
+
+    - name: Resolve locked dependencies
+      shell: bash
+      working-directory: flutter
+      env:
+        SCAFFOLD_READ_TOKEN: ${{ inputs.scaffold-token }}
+        GIT_TERMINAL_PROMPT: '0'
+        GIT_CONFIG_COUNT: '2'
+        GIT_CONFIG_KEY_0: credential.https://github.com/adolphJane/ifa_flutter_scaffold.git.useHttpPath
+        GIT_CONFIG_VALUE_0: 'true'
+        GIT_CONFIG_KEY_1: credential.https://github.com/adolphJane/ifa_flutter_scaffold.git.helper
+        GIT_CONFIG_VALUE_1: >-
+          !f() { if [ "$1" = get ]; then
+          printf 'username=x-access-token\npassword=%s\n' "$SCAFFOLD_READ_TOKEN";
+          fi; }; f
+      run: fvm flutter pub get --enforce-lockfile
